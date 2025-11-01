@@ -1,0 +1,21 @@
+---
+description: Server-side logic, database schema, and edge functions
+globs:
+  - supabase/**
+  - server/**
+  - scripts/**
+default: false
+---
+# Scope: Backend & Data Layer
+
+Focus on Supabase schema, server actions, and background jobs required to store call outcomes and expose analytics.
+
+## Key Objectives
+- Model tables (`phone_numbers`, `call_attempts`, `transcripts`, `verifications`) with clear foreign keys.
+- Enforce GDPR-compliant retention policies and consent tracking.
+- Provide APIs or server actions for landing pages and dashboard queries.
+
+## Guardrails
+- Secrets must live in environment variables, never in repo.
+- Apply Row Level Security defaults to deny until explicit policies exist.
+- Log workflow events with structured JSON for future analytics.

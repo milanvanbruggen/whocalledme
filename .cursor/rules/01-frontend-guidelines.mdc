@@ -1,0 +1,34 @@
+---
+description: Frontend structure and UX standards for the Next.js + ShadCN UI stack
+globs:
+  - app/**
+  - components/**
+  - lib/**
+alwaysApply: false
+---
+# Frontend Implementation Guidelines
+
+## Stack
+- Next.js App Router (TypeScript) with Tailwind + ShadCN UI primitives.
+- Use server components by default; isolate client components when stateful UI or effects are needed.
+- Centralize shared utilities in `lib/` and UI primitives in `components/ui/`.
+
+## UX Principles
+- Primary entry is a single search field for phone lookup.
+- Provide immediate feedback: loading state, success result summary, and fallback when no data yet.
+- Keep copy concise and reassuring; avoid fear-based wording.
+- Use pastel accent palette defined in `app/globals.css`.
+
+## Component Practices
+- Create composable sections (hero, how-it-works, compliance notice) instead of monolithic pages.
+- Prefer accessible components (labels, aria attributes, keyboard focus states).
+- Wrap long-form copy in layout containers limited to 2xl width for readability.
+
+## SEO & Metadata
+- Generate metadata per number page (`/nummer/[digits]`) including title, description, open graph tags.
+- Include structured data (JSON-LD) for organization/person when identification is confident.
+
+## Testing & QA
+- Snapshot-check key pages once UI stabilizes.
+- Validate that dynamic routing handles both `+31` and `0031` formats.
+- Ensure layout remains responsive from 320px up to desktop widths.

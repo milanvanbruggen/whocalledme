@@ -1,0 +1,31 @@
+---
+title: Analytics Dashboard Starter
+status: planned
+relatedScopes:
+  - backend
+  - frontend
+tags:
+  - analytics
+  - phase1
+---
+# Feature: Analytics Dashboard Starter
+
+## User Story
+As the founder, I want to monitor call throughput and identification accuracy so I can gauge traction and cost efficiency.
+
+## Outcome
+- Admin-only route showing daily lookups, successful identifications, retries, and spend estimates.
+- Highlight conversion funnel: searches → calls placed → identifications → verified.
+- Include filters by country code and call outcome.
+- Export basic CSV for deeper analysis.
+
+## Acceptance Criteria
+- Metrics sourced from Supabase SQL or materialized views updated hourly.
+- Accuracy rate and average call duration displayed with deltas.
+- Dashboard gated with simple password or Vercel protect (until auth added).
+- Error budget indicator warns if failures exceed 20% on any given day.
+
+## Technical Notes
+- Use Supabase Row Level Security to lock down analytics tables.
+- Consider collecting events via Supabase Edge Functions to avoid client writes.
+- Lay groundwork for future Chart.js or Tremor components but keep MVP simple (cards + sparklines).

@@ -1,0 +1,20 @@
+---
+description: External automation and voice workflow orchestration
+globs:
+  - workflows/**
+  - docs/workflows/**
+default: false
+---
+# Scope: Voice Workflow & Integrations
+
+Focus on n8n flows, ElevenLabs agent configuration, and integration scripts connecting the voice call pipeline to Supabase.
+
+## Key Objectives
+- Standardize consent script and fallback messaging for all outbound calls.
+- Handle retries, voicemail detection, and unreachable states gracefully.
+- Return normalized payloads that UI and analytics expect.
+
+## Guardrails
+- Keep integration credentials in secure stores; test with sandbox numbers first.
+- Respect region restrictions (EU-only) and schedule windows to avoid off-hours disturbances.
+- Document each workflow step for auditing and hand-off.

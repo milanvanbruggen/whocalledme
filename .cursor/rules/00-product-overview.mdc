@@ -1,0 +1,30 @@
+---
+description: High-level context for the AI Caller ID product vision and tone
+alwaysApply: true
+---
+# AI Caller ID – Product Overview
+
+## Mission
+- Help users identify unknown phone numbers without calling back.
+- Use an AI voice agent to collect identification and publish public number profiles.
+
+## Success Criteria
+- ≥80% of calls return a person or organization name.
+- >1,000 organic searches per day within three months.
+- Each lookup produces an SEO landing page with transcript + metadata.
+- Users confirm ≥70% of identities as correct.
+
+## Target Audiences
+- Consumers who want quick caller insight with privacy preserved.
+- Businesses that will later claim and maintain their listings.
+- SEO visitors discovering profiles via search engines.
+
+## Tone & Design Language
+- “Personal detective” vibe: minimal, airy layouts with pastel accents.
+- Feels smart and mysterious while staying approachable and privacy forward.
+
+## Key Risks to Watch
+- Consent and GDPR compliance for recording AI calls.
+- Call duration must stay under one minute to control costs.
+- Accuracy of name recognition (target ≥80%).
+- Publication of transcripts must not expose sensitive data.

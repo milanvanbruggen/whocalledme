@@ -1,0 +1,27 @@
+---
+description: Voice workflow orchestration, data storage, and privacy compliance
+alwaysApply: false
+---
+# Workflow & Compliance Guardrails
+
+## Call Orchestration
+- Use ElevenLabs voice agent via n8n workflow triggered after a user submits a search.
+- Retry once on call failure; log statuses (`pending`, `in-progress`, `completed`, `failed`) in Supabase.
+- Calls must announce recording and request consent before gathering personal data.
+
+## Data Handling
+- Store transcripts, caller metadata, and consent flag in Supabase with at-rest encryption enabled.
+- Strip PII that is unrelated to identification before publishing (addresses, bank info, etc.).
+- Keep raw audio for auditing but rotate/expire within 30 days unless legally required.
+
+## Landing Page Generation
+- Each lookup produces `/nummer/{digits}` entry with:
+  - Canonical phone number format (E.164).
+  - Summary sentence, identification confidence, call outcome.
+  - Timestamp of last verification and list of user confirmations.
+- Queue static regeneration or incremental cache invalidation once data changes.
+
+## Legal & User Rights
+- Provide a visible privacy link and removal request path on every page.
+- Respect opt-out list: if a number requests removal, suppress from auto calls and hide profile.
+- Document consent language revisions in version control for audit trail.

@@ -1,0 +1,31 @@
+---
+title: Number Profile & SEO Landing Page
+status: planned
+relatedScopes:
+  - frontend
+  - seo
+tags:
+  - seo
+  - mvp
+---
+# Feature: Number Profile & SEO Landing Page
+
+## User Story
+As a visitor arriving from search, I want a fast, mobile-friendly page summarizing who owns the number plus transcript context so I can trust the information.
+
+## Outcome
+- Dynamic route `/nummer/[digits]` renders identifier hero, trust indicators, and transcript snippet.
+- Includes consent timestamp, call type, and crowd validation (“X people confirmed this”).
+- Secondary modules: “What to do next”, “Report incorrect info”, and call-to-action for businesses to claim profile (placeholder for future).
+- Generate static metadata for social sharing.
+
+## Acceptance Criteria
+- Page renders within <200ms on cached hit and <1s when fallback generating.
+- Structured data JSON-LD provided when name/company is known.
+- Contains canonical link, meta description and open graph tags.
+- Displays legal disclaimer and link to removal request.
+
+## Technical Notes
+- Prefer incremental static regeneration with fallback `blocking`.
+- Use Supabase edge function/webhook to revalidate path after new transcript arrives.
+- Consider storing sanitized transcript summary in `phone_profiles` table to avoid running summarization on every request.

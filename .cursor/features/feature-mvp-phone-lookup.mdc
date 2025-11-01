@@ -1,0 +1,30 @@
+---
+title: MVP Phone Lookup Flow
+status: planned
+relatedScopes:
+  - frontend
+  - workflows
+tags:
+  - mvp
+---
+# Feature: MVP Phone Lookup Flow
+
+## User Story
+As a visitor who received a missed call, I want to enter a phone number and immediately see whether AI Caller ID can identify the caller so I can decide if I should return the call.
+
+## Outcome
+- Desktop and mobile visitors land on a hero section with single prominent input.
+- Submitting validates number format, shows loading state, and hands off to the AI call workflow.
+- If recent data exists, show cached identification instantly with timestamp.
+- When no data exists yet, communicate that the AI agent is calling and invite user to check back or subscribe.
+
+## Acceptance Criteria
+- Input accepts international formats (`+31612345678`, `0031612345678`, `0612345678`).
+- While call in progress, UI shows live status updates via Supabase realtime or polling.
+- Results include identification summary, call outcome badge, and compliance notice.
+- Errors (invalid number, agent quota exceeded) surface clear recovery actions.
+
+## Technical Notes
+- Use zod schema for validation shared between client and server actions.
+- Persist searches for analytics including source (direct/SEO) and call status.
+- Expose React Query or equivalent SWR hook for polling call status updates.

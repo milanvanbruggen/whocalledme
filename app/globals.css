@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 240 20% 98%;
+  --foreground: 240 10% 10%;
+  --muted: 240 16% 94%;
+  --muted-foreground: 240 6% 40%;
+  --accent: 264 100% 89%;
+  --accent-foreground: 258 59% 24%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 10%;
+  --primary: 258 66% 55%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 200 69% 96%;
+  --secondary-foreground: 210 16% 32%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 11% 90%;
+  --input: 240 11% 90%;
+  --ring: 258 66% 55%;
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: 240 10% 5%;
+  --foreground: 0 0% 98%;
+  --muted: 240 8% 15%;
+  --muted-foreground: 240 6% 70%;
+  --accent: 258 65% 45%;
+  --accent-foreground: 0 0% 100%;
+  --card: 240 7% 12%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 7% 12%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 258 65% 60%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 245 8% 20%;
+  --secondary-foreground: 0 0% 98%;
+  --destructive: 359 69% 55%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 6% 20%;
+  --input: 240 6% 20%;
+  --ring: 258 65% 60%;
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+.gradient-border {
+  background: linear-gradient(135deg, hsla(258, 66%, 55%, 0.12), transparent);
+  border: 1px solid hsla(258, 66%, 55%, 0.2);
+  border-radius: var(--radius);
+}
+
+.glass {
+  background: hsla(0, 0%, 100%, 0.8);
+  backdrop-filter: blur(18px);
+}

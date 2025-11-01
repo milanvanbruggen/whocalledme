@@ -1,0 +1,31 @@
+---
+title: AI Call Orchestration & Transcript Capture
+status: planned
+relatedScopes:
+  - workflows
+  - backend
+tags:
+  - elevenlabs
+  - n8n
+---
+# Feature: AI Call Orchestration & Transcript Capture
+
+## User Story
+As a user, when I request identification the system should place an AI-powered call, capture who answers, and store a short transcript so I can review what was said.
+
+## Outcome
+- n8n workflow triggers ElevenLabs call with standardized opening consent script.
+- Call responses mapped to structured payload (`type`, `name`, `company`, `notes`, `confidence`).
+- Transcript summarized to <= 180 characters for SEO snippet.
+- Workflow posts results and call metrics back to Supabase via REST service role key.
+
+## Acceptance Criteria
+- Consent message plays before collecting any information.
+- If voicemail detected, mark status `voicemail` and store transcript preview.
+- Errors (busy, unreachable) logged with retry metadata and surfaced to UI.
+- Audio stored in secure bucket with retention policy ≤30 days.
+
+## Technical Notes
+- Represent workflow states using Supabase `call_attempts` table with triggers for analytics.
+- Use N8N credential vault; never store ElevenLabs secrets client-side.
+- Provide test harness numbers (mock provider) to validate flows without real calls.

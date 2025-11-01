@@ -1,0 +1,22 @@
+---
+description: UI implementation scope for Next.js pages and shared components
+globs:
+  - app/**
+  - components/**
+  - public/**
+  - lib/**
+default: true
+---
+# Scope: Frontend Experience
+
+Focus on building user-facing flows including homepage hero, number result pages, and supporting UI components.
+
+## Key Objectives
+- Maintain ShadCN UI styling, accessibility, and responsive layout.
+- Keep copy aligned with product tone (“smart detective”).
+- Ensure state flows reflect call lifecycle states (`idle`, `calling`, `identified`, `failed`).
+
+## Guardrails
+- Do not embed API secrets or call ElevenLabs directly from the client.
+- Always provide compliance links and privacy notice in the footer.
+- Validate phone numbers before dispatching server actions.
