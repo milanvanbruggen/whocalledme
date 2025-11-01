@@ -35,7 +35,7 @@ export async function recordCallAttempt({
 }
 
 interface UpdateCallAttemptInput {
-  conversationId: string;
+  conversationId?: string;
   status?: string;
   elevenLabsStatus?: string | null;
   errorMessage?: string | null;
@@ -56,12 +56,14 @@ export async function updateCallAttemptByConversation({
   summary,
   confidence,
   endedAt
-}: UpdateCallAttemptInput) {
+}: UpdateCallAttemptInput & { conversationId: string }) {
   const supabase = getSupabaseAdminClient();
+  const IS_DEV = process.env.NODE_ENV !== "production";
 
   const updates: Record<string, unknown> = {};
 
-  if (status) updates.status = status;
+  // Use !== undefined to allow empty strings and null values
+  if (status !== undefined) updates.status = status;
   if (elevenLabsStatus !== undefined) updates.elevenlabs_status = elevenLabsStatus;
   if (errorMessage !== undefined) updates.error_message = errorMessage;
   if (payload !== undefined) updates.payload = payload;
@@ -72,7 +74,15 @@ export async function updateCallAttemptByConversation({
     ? new Date(endedAt).toISOString()
     : null;
 
+  // Note: updated_at is automatically updated by database trigger, so we don't need to set it manually
+  // But we need at least one field to update, otherwise the update won't trigger the updated_at update
+  
   if (Object.keys(updates).length === 0) {
+    // If no updates provided, at least update a dummy field to trigger updated_at
+    // But this shouldn't happen in practice
+    if (IS_DEV) {
+      console.warn("⚠️ No updates provided for call attempt update");
+    }
     return null;
   }
 
@@ -84,7 +94,13 @@ export async function updateCallAttemptByConversation({
     .maybeSingle();
 
   if (error) {
-    console.error("Failed to update call attempt", error);
+    console.error("❌ Failed to update call attempt by conversation:", {
+      error: error.message,
+      code: error.code,
+      details: error.details,
+      conversationId,
+      updates
+    });
     return null;
   }
 
@@ -94,20 +110,22 @@ export async function updateCallAttemptByConversation({
 export async function getLatestCallAttempt(lookupId: string) {
   const supabase = getSupabaseAdminClient();
 
+  // Use a different query pattern to avoid caching issues
+  // Instead of .maybeSingle(), we use .limit(1) and take the first result
   const { data, error } = await supabase
     .from("call_attempts")
     .select("*")
     .eq("lookup_id", lookupId)
-    .order("requested_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order("updated_at", { ascending: false }) // Order by updated_at to get most recent
+    .limit(1);
 
   if (error) {
     console.error("Failed to fetch call attempt", error);
     return null;
   }
 
-  return data as CallAttemptRecord | null;
+  // Return first result or null
+  return (data && data.length > 0 ? data[0] : null) as CallAttemptRecord | null;
 }
 
 export async function getCallAttemptByConversationId(conversationId: string) {
@@ -124,6 +142,104 @@ export async function getCallAttemptByConversationId(conversationId: string) {
   if (error) {
     console.error("Failed to fetch call attempt by conversation id", error);
     return null;
+  }
+
+  return data as CallAttemptRecord | null;
+}
+
+export async function updateCallAttemptByLookupId({
+  lookupId,
+  status,
+  elevenLabsStatus,
+  errorMessage,
+  payload,
+  transcript,
+  summary,
+  confidence,
+  endedAt
+}: UpdateCallAttemptInput & { lookupId: string }) {
+  const supabase = getSupabaseAdminClient();
+  const IS_DEV = process.env.NODE_ENV !== "production";
+
+  const updates: Record<string, unknown> = {};
+
+  // Use !== undefined to allow empty strings and null values
+  if (status !== undefined) updates.status = status;
+  if (elevenLabsStatus !== undefined) updates.elevenlabs_status = elevenLabsStatus;
+  if (errorMessage !== undefined) updates.error_message = errorMessage;
+  if (payload !== undefined) updates.payload = payload;
+  if (transcript !== undefined) updates.transcript = transcript;
+  if (summary !== undefined) updates.summary = summary;
+  if (confidence !== undefined) updates.confidence = confidence;
+  if (endedAt !== undefined) updates.ended_at = endedAt
+    ? new Date(endedAt).toISOString()
+    : null;
+
+  // Note: updated_at is automatically updated by database trigger, so we don't need to set it manually
+  // But we need at least one field to update, otherwise the update won't trigger the updated_at update
+  
+  if (Object.keys(updates).length === 0) {
+    // If no updates provided, at least update a dummy field to trigger updated_at
+    // But this shouldn't happen in practice
+    if (IS_DEV) {
+      console.warn("⚠️ No updates provided for call attempt update");
+    }
+    return null;
+  }
+
+  // First get the latest call attempt for this lookupId
+  const latestAttempt = await getLatestCallAttempt(lookupId);
+  
+  if (!latestAttempt) {
+    console.error("❌ No call attempt found for lookupId:", lookupId);
+    return null;
+  }
+  
+  if (IS_DEV) {
+    console.log("🔧 Updating call attempt by lookupId:", {
+      lookupId,
+      attemptId: latestAttempt.id,
+      currentStatus: latestAttempt.status,
+      currentElevenLabsStatus: latestAttempt.elevenlabs_status,
+      updates
+    });
+  }
+  
+  const { data, error } = await supabase
+    .from("call_attempts")
+    .update(updates)
+    .eq("id", latestAttempt.id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    console.error("❌ Failed to update call attempt by lookup ID:", {
+      error: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      lookupId,
+      attemptId: latestAttempt.id,
+      updates
+    });
+    return null;
+  }
+
+  if (!data) {
+    console.error("❌ Update returned no data - row might not exist:", {
+      lookupId,
+      attemptId: latestAttempt.id
+    });
+    return null;
+  }
+
+  if (IS_DEV && data) {
+    console.log("✅ Call attempt updated:", {
+      id: data.id,
+      status: (data as CallAttemptRecord).status,
+      elevenlabs_status: (data as CallAttemptRecord).elevenlabs_status,
+      payload: (data as CallAttemptRecord).payload
+    });
   }
 
   return data as CallAttemptRecord | null;

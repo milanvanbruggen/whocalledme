@@ -208,6 +208,25 @@ function determineStageStates({
       "transcribing"
     ]);
 
+  if (process.env.NODE_ENV !== "production") {
+    console.log("🔍 CallProgress analysis:", {
+      statusValue,
+      elevenStatusValue,
+      combinedStatus,
+      payloadEvent,
+      payloadType,
+      combinedStatusWithPayload,
+      hasPostCallEvent,
+      hasAnalysisStarted,
+      hasCompletedData,
+      isJustScheduled: (statusValue === "scheduled" || elevenStatusValue === "scheduled" || 
+       (statusValue === "" && elevenStatusValue === "")) &&
+      !hasPostCallEvent &&
+      !hasAnalysisStarted &&
+      !hasCompletedData
+    });
+  }
+
   // Stage 2: Completed - check if truly completed
   // Only mark as completed if:
   // 1. Lookup status is cached (definitive)
@@ -218,19 +237,23 @@ function determineStageStates({
     (matchesAny(combinedStatusWithPayload, COMPLETED_KEYWORDS) && hasCompletedData) ||
     (hasPostCallEvent && hasCompletedData);
 
-  // Check if status is just "scheduled" - don't advance stages yet
+  // Check if status is just "scheduled" - but only if there are no events/data indicating progress
   const isJustScheduled = 
-    statusValue === "scheduled" || 
-    elevenStatusValue === "scheduled" ||
-    (statusValue === "" && elevenStatusValue === "");
+    (statusValue === "scheduled" || elevenStatusValue === "scheduled" || 
+     (statusValue === "" && elevenStatusValue === "")) &&
+    !hasPostCallEvent &&
+    !hasAnalysisStarted &&
+    !hasCompletedData;
 
   // Determine active stage sequentially (skip dialing stage)
+  // Priority: completed > analysis > scheduled
   if (hasCompleted && hasCompletedData) {
     // All done - show stage 2 as complete (only if we have actual data)
     activeIndex = 2;
   } else if (hasAnalysisStarted || hasPostCallEvent || hasCompletedData) {
     // Analysis stage - we have data being processed OR post-call events (webhook processing)
     // This is triggered immediately when post_call_transcription webhook is received
+    // Even if status is still "scheduled", if we have post_call events OR completed data, we're analyzing
     activeIndex = 1;
   } else if (isJustScheduled) {
     // Just scheduled - stay at stage 0
@@ -238,6 +261,16 @@ function determineStageStates({
   } else {
     // If we have any status that's not scheduled, assume analysis has started
     activeIndex = 1;
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log("🔍 CallProgress result:", {
+      activeIndex,
+      hasCompleted,
+      hasCompletedData,
+      isJustScheduled,
+      finalActiveIndex: activeIndex
+    });
   }
 
   const stageEntries = STAGES.map((stage, index) => {
@@ -299,7 +332,23 @@ export interface CallProgressProps {
 
 export function CallProgress({ callAttempt, lookupStatus, etaSeconds }: CallProgressProps) {
   const { states, activeIndex, hasFailure } = React.useMemo(
-    () => determineStageStates({ callAttempt, lookupStatus }),
+    () => {
+      const result = determineStageStates({ callAttempt, lookupStatus });
+      
+      // Debug logging in development
+      if (process.env.NODE_ENV !== "production") {
+        console.log("📈 CallProgress determineStageStates:", {
+          callAttemptStatus: callAttempt?.status,
+          callAttemptElevenLabsStatus: callAttempt?.elevenlabs_status,
+          callAttemptPayload: callAttempt?.payload,
+          lookupStatus,
+          activeIndex: result.activeIndex,
+          states: result.states
+        });
+      }
+      
+      return result;
+    },
     [callAttempt, lookupStatus]
   );
 

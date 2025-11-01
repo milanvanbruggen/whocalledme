@@ -7,6 +7,7 @@ import { CallProgress } from "@/components/call-progress";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { TestTube } from "lucide-react";
 import { formatDateTime } from "@/lib/format";
 import type { CallAttemptSnapshot, LookupStatusValue } from "@/lib/lookup-status";
 import { validatePhoneNumber } from "@/lib/phone";
@@ -135,6 +136,7 @@ export function LookupForm() {
 
     let stopped = false;
     let intervalId: number | null = null;
+    let fetchStatusRef: (() => Promise<void>) | null = null;
 
     const fetchStatus = async () => {
       try {
@@ -148,6 +150,19 @@ export function LookupForm() {
 
         const data = await response.json();
         if (stopped) return;
+
+        // Debug logging in development
+        if (isDev) {
+          console.log("🔄 Polling update:", {
+            lookupId,
+            lookupStatus: data.lookup?.status,
+            callAttemptStatus: data.callAttempt?.status,
+            callAttemptElevenLabsStatus: data.callAttempt?.elevenlabs_status,
+            callAttemptPayload: data.callAttempt?.payload,
+            hasTranscript: !!data.callAttempt?.transcript,
+            hasSummary: !!data.callAttempt?.summary
+          });
+        }
 
         const latestStatus = data.lookup?.status as LookupStatusValue | undefined;
         
@@ -169,20 +184,69 @@ export function LookupForm() {
             payload: data.callAttempt.payload
           };
           
-          // Only update if something actually changed
+          // Always update call attempt to ensure React re-renders with latest data
+          // This is important for real-time progress updates
           setCallAttempt((prev) => {
-            if (!prev) return newCallAttempt;
+            if (!prev) {
+              if (isDev) {
+                console.log("📊 CallAttempt state set (first time):", {
+                  status: newCallAttempt.status,
+                  payload: newCallAttempt.payload
+                });
+              }
+              return newCallAttempt;
+            }
             
-            // Check if anything meaningful changed
+            // Compare timestamps to prevent overwriting newer data with older data
+            // This is critical when webhook simulation sets fresh data, then polling tries to overwrite it
+            const prevTimestamp = prev.updated_at ? new Date(prev.updated_at).getTime() : 0;
+            const newTimestamp = newCallAttempt.updated_at ? new Date(newCallAttempt.updated_at).getTime() : 0;
+            
+            if (newTimestamp < prevTimestamp && prevTimestamp > 0) {
+              // New data from API is older than current state - don't overwrite!
+              if (isDev) {
+                console.log("⏸️ Ignoring older data from API:", {
+                  prevTimestamp: new Date(prev.updated_at || '').toISOString(),
+                  newTimestamp: new Date(newCallAttempt.updated_at || '').toISOString(),
+                  prevStatus: prev.status,
+                  newStatus: newCallAttempt.status,
+                  prevHasData: !!(prev.transcript || prev.summary),
+                  newHasData: !!(newCallAttempt.transcript || newCallAttempt.summary)
+                });
+              }
+              return prev; // Keep the newer state
+            }
+            
+            // Check if anything meaningful changed (including payload)
+            const prevPayloadStr = JSON.stringify(prev.payload ?? {});
+            const newPayloadStr = JSON.stringify(newCallAttempt.payload ?? {});
+            
             const hasChanges =
               prev.status !== newCallAttempt.status ||
               prev.elevenlabs_status !== newCallAttempt.elevenlabs_status ||
               prev.summary !== newCallAttempt.summary ||
               prev.transcript !== newCallAttempt.transcript ||
               prev.confidence !== newCallAttempt.confidence ||
-              prev.updated_at !== newCallAttempt.updated_at;
+              prev.updated_at !== newCallAttempt.updated_at ||
+              prevPayloadStr !== newPayloadStr;
             
-            return hasChanges ? newCallAttempt : prev;
+            if (hasChanges && isDev) {
+              console.log("📊 CallAttempt state updated:", {
+                prevStatus: prev.status,
+                newStatus: newCallAttempt.status,
+                prevPayload: prev.payload,
+                newPayload: newCallAttempt.payload,
+                hasTranscript: !!newCallAttempt.transcript,
+                hasSummary: !!newCallAttempt.summary,
+                updatedAt: newCallAttempt.updated_at
+              });
+            } else if (isDev && !hasChanges) {
+              console.log("⏸️ CallAttempt state unchanged (skipping update)");
+            }
+            
+            // Always return new object to force React re-render (even if data is same)
+            // This ensures CallProgress component receives new props and re-evaluates
+            return hasChanges ? newCallAttempt : { ...newCallAttempt };
           });
         }
 
@@ -373,14 +437,30 @@ export function LookupForm() {
       }
     };
 
+    fetchStatusRef = fetchStatus;
     fetchStatus();
-    intervalId = window.setInterval(fetchStatus, 5000);
+    // Shorter interval in development for faster testing
+    intervalId = window.setInterval(fetchStatus, isDev ? 2000 : 5000);
+
+    // Listen for manual refresh events (triggered after webhook simulation)
+    const handleRefresh = () => {
+      if (!stopped && fetchStatusRef) {
+        if (isDev) {
+          console.log("🔄 Manual refresh triggered via event");
+        }
+        fetchStatusRef();
+      } else if (isDev) {
+        console.log("⏸️ Refresh skipped (stopped or no fetchStatusRef)");
+      }
+    };
+    window.addEventListener("refresh-status", handleRefresh);
 
     return () => {
       stopped = true;
       if (intervalId) {
         window.clearInterval(intervalId);
       }
+      window.removeEventListener("refresh-status", handleRefresh);
     };
   }, [result?.lookupId]);
 
@@ -448,6 +528,7 @@ export function LookupForm() {
           callAttempt={callAttempt}
           lookupStatus={lookupStatus}
           tags={resultTags}
+          setCallAttempt={setCallAttempt}
         />
       ) : null}
     </form>
@@ -458,12 +539,14 @@ function ResultCard({
   result,
   callAttempt,
   lookupStatus,
-  tags
+  tags,
+  setCallAttempt
 }: {
   result: LookupResult;
   callAttempt: CallAttemptSnapshot | null;
   lookupStatus: LookupStatusValue | null;
   tags: string[];
+  setCallAttempt: React.Dispatch<React.SetStateAction<CallAttemptSnapshot | null>>;
 }) {
   if (result.state === "cached") {
     return (
@@ -504,6 +587,7 @@ function ResultCard({
         </div>
         <p className="mt-2 text-sm text-muted-foreground">{result.message}</p>
         <CallProgress
+          key={`call-progress-${callAttempt?.updated_at ?? 'none'}-${callAttempt?.status ?? 'none'}`}
           callAttempt={callAttempt}
           lookupStatus={lookupStatus}
           etaSeconds={result.etaSeconds}
@@ -512,6 +596,9 @@ function ResultCard({
         {isDev && result.debugMessage ? (
           <p className="mt-3 text-xs text-destructive">{result.debugMessage}</p>
         ) : null}
+      {isDev && result.lookupId ? (
+        <WebhookSimulator lookupId={result.lookupId} setCallAttempt={setCallAttempt} />
+      ) : null}
       </div>
     );
   }
@@ -531,6 +618,135 @@ function ResultCard({
       {isDev && result.debugMessage ? (
         <p className="mt-3 text-xs text-destructive">{result.debugMessage}</p>
       ) : null}
+      {isDev && result.lookupId ? (
+        <WebhookSimulator lookupId={result.lookupId} setCallAttempt={setCallAttempt} />
+      ) : null}
+    </div>
+  );
+}
+
+function WebhookSimulator({ 
+  lookupId, 
+  setCallAttempt 
+}: { 
+  lookupId: string;
+  setCallAttempt: React.Dispatch<React.SetStateAction<CallAttemptSnapshot | null>>;
+}) {
+  const [isSimulating, setIsSimulating] = React.useState(false);
+  const [lastEvent, setLastEvent] = React.useState<string | null>(null);
+
+  const simulateWebhook = async (event: string) => {
+    setIsSimulating(true);
+    setLastEvent(null);
+    
+    try {
+      console.log("🚀 Starting webhook simulation:", { lookupId, event });
+      console.log("🔍 setCallAttempt type:", typeof setCallAttempt, setCallAttempt);
+      
+      const response = await fetch(`/api/test/webhook-simulation?lookupId=${lookupId}&event=${event}`, {
+        method: "POST"
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        setLastEvent(event);
+        console.log("✅ Webhook simulated:", data);
+        
+        // If the response contains updated callAttempt data, use it directly
+        if (data.callAttempt) {
+          console.log("📊 Using updated callAttempt from response:", data.callAttempt);
+          setCallAttempt(data.callAttempt);
+          
+          // Don't trigger immediate refresh - we already have the latest callAttempt data!
+          // Only trigger a delayed refresh to sync lookup status and profile data (not callAttempt)
+          // This prevents the polling from overwriting our fresh callAttempt data with stale cache
+          const refreshDelayMs = 3000; // 3 seconds should be enough for database consistency
+          
+          setTimeout(() => {
+            if (isDev) {
+              console.log(`🔄 Triggering delayed refresh for lookup/profile sync (after ${refreshDelayMs}ms)`);
+            }
+            window.dispatchEvent(new Event("refresh-status"));
+          }, refreshDelayMs);
+        } else {
+          // No callAttempt in response - trigger immediate refresh to fetch it
+          if (isDev) {
+            console.log("🔄 Triggering immediate refresh (no callAttempt in response)");
+          }
+          window.dispatchEvent(new Event("refresh-status"));
+          
+          // Backup refresh after short delay
+          setTimeout(() => {
+            console.log("🔄 Triggering backup refresh");
+            window.dispatchEvent(new Event("refresh-status"));
+          }, 1000);
+        }
+      } else {
+        console.error("❌ Webhook simulation failed:", data);
+        alert(`Failed to simulate webhook: ${data.error || "Unknown error"}`);
+      }
+    } catch (error) {
+      console.error("❌ Webhook simulation error:", error);
+      alert(`Error simulating webhook: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSimulating(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 rounded-md border border-dashed border-muted-foreground/30 bg-muted/30 p-3">
+      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+        <TestTube className="h-3 w-3" />
+        <span>Test Webhook Simulatie</span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => simulateWebhook("post_call_transcription")}
+          disabled={isSimulating}
+          className="h-7 text-xs"
+        >
+          {isSimulating && lastEvent === "post_call_transcription" ? "..." : "📞 Post Call"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => simulateWebhook("initiating")}
+          disabled={isSimulating}
+          className="h-7 text-xs"
+        >
+          {isSimulating && lastEvent === "initiating" ? "..." : "▶️ Initiate"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => simulateWebhook("scheduled")}
+          disabled={isSimulating}
+          className="h-7 text-xs"
+        >
+          {isSimulating && lastEvent === "scheduled" ? "..." : "⏸️ Scheduled"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => simulateWebhook("completed")}
+          disabled={isSimulating}
+          className="h-7 text-xs"
+        >
+          {isSimulating && lastEvent === "completed" ? "..." : "✅ Completed"}
+        </Button>
+      </div>
+      {lastEvent && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Laatste event: <span className="font-medium">{lastEvent}</span> (wacht ~5 sec voor update)
+        </p>
+      )}
     </div>
   );
 }

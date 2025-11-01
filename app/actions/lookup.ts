@@ -121,15 +121,40 @@ export async function lookupPhoneNumber(input: { phoneNumber: string }): Promise
   }
 
   try {
-    const response = await startOutboundCall({
-      phoneNumber: normalized,
-      metadata: {
-        lookupId,
-        source: "web_lookup",
-        normalized,
-        rawInput
+    // In development mode, skip actual ElevenLabs calls to allow testing without real calls
+    const DISABLE_ELEVENLABS_CALLS = process.env.DISABLE_ELEVENLABS_CALLS === "true" || isDev;
+    
+    let response: { success: boolean; message?: string; conversation_id: string | null; callSid?: string | null };
+    
+    if (DISABLE_ELEVENLABS_CALLS) {
+      // Mock response for testing - generates a fake conversation_id
+      const mockConversationId = `mock_conv_${lookupId}_${Date.now()}`;
+      response = {
+        success: true,
+        message: "Mock call scheduled (ElevenLabs calls disabled for testing)",
+        conversation_id: mockConversationId,
+        callSid: `mock_call_${Date.now()}`
+      };
+      
+      if (isDev) {
+        console.log("🔧 Mock call created (ElevenLabs calls disabled):", {
+          lookupId,
+          conversationId: mockConversationId,
+          phoneNumber: normalized
+        });
       }
-    });
+    } else {
+      // Real call
+      response = await startOutboundCall({
+        phoneNumber: normalized,
+        metadata: {
+          lookupId,
+          source: "web_lookup",
+          normalized,
+          rawInput
+        }
+      });
+    }
 
     await recordCallAttempt({
       lookupId,
@@ -137,7 +162,8 @@ export async function lookupPhoneNumber(input: { phoneNumber: string }): Promise
       conversationId: response.conversation_id,
       elevenLabsStatus: response.message ?? null,
       payload: {
-        callSid: response.callSid ?? null
+        callSid: response.callSid ?? null,
+        mock: DISABLE_ELEVENLABS_CALLS ? true : undefined
       }
     });
   } catch (error) {
