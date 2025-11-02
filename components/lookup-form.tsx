@@ -21,20 +21,52 @@ function toPlainObject(value: unknown): Record<string, unknown> {
 
 function extractNameFromPayload(payload?: Record<string, unknown> | null): string | null {
   if (!payload) return null;
+  
   const data = toPlainObject(payload.data);
+  
+  // First, try to extract from analysis.data_collection_results (ElevenLabs structure)
+  const analysis = toPlainObject(data.analysis);
+  if (analysis) {
+    const dataCollectionResults = toPlainObject(analysis.data_collection_results);
+    if (dataCollectionResults) {
+      const nameItem = toPlainObject(dataCollectionResults.name);
+      if (nameItem && typeof nameItem.value === "string" && nameItem.value.trim().length > 0) {
+        const name = nameItem.value.trim();
+        if (name.length > 1) return name;
+      }
+    }
+  }
+  
+  // Second, try to extract from transcript (user messages)
   const transcript = Array.isArray(data.transcript) ? data.transcript : [];
   for (const entryRaw of transcript) {
     const entry = toPlainObject(entryRaw);
     if (entry.role !== "user" || typeof entry.message !== "string") continue;
     const cleaned = entry.message.replace(/[.!?]+$/, "").trim();
     const match = cleaned.match(
-      /\b(?:met|u spreekt met|dit is|je spreekt met|hier is)\s+([A-Z][\p{L}'`\- ]+)/iu
+      /\b(?:met|u spreekt met|dit is|je spreekt met|hier is|mijn naam is|ik ben)\s+([A-Z][\p{L}'`\- ]+)/iu
     );
     if (match && match[1]) {
       const name = match[1].trim();
       if (name.length > 1) return name;
     }
   }
+  
+  // Third, try to extract from metadata or other fields
+  const metadata = toPlainObject(data.metadata);
+  if (metadata) {
+    const nameFields = ["callerName", "caller_name", "name", "personName", "person_name"];
+    for (const field of nameFields) {
+      const nameValue = metadata[field];
+      if (typeof nameValue === "string" && nameValue.trim().length > 0) {
+        const name = nameValue.trim();
+        if (name.length > 1 && name.toLowerCase() !== "onbekende beller") {
+          return name;
+        }
+      }
+    }
+  }
+  
   return null;
 }
 
@@ -74,9 +106,127 @@ function deriveEntityTag(summary?: string | null, callerName?: string | null): s
   return null;
 }
 
+type ProfileSnapshot = {
+  callerName?: string | null;
+  normalized?: string | null;
+  summary?: string | null;
+  transcriptPreview?: string | null;
+  confidence?: number | null;
+  lastChecked?: string | null;
+  tags?: string[] | null;
+};
+
+type ApiCallAttempt = {
+  status?: string | null;
+  elevenlabs_status?: string | null;
+  error_message?: string | null;
+  summary?: string | null;
+  transcript?: string | null;
+  confidence?: number | null;
+  updated_at?: string | null;
+  payload?: Record<string, unknown> | null;
+};
+
+function stableStringify(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "null";
+  }
+  if (typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  const entries = Object.keys(value as Record<string, unknown>)
+    .sort()
+    .map((key) => `"${key}":${stableStringify((value as Record<string, unknown>)[key])}`);
+  return `{${entries.join(",")}}`;
+}
+
+/**
+ * Compute hash of relevant fields for change detection
+ */
+function computeDataHash(snapshot: CallAttemptSnapshot | null): string {
+  if (!snapshot) return "null";
+  
+  const relevantFields = {
+    status: snapshot.status ?? null,
+    elevenlabs_status: snapshot.elevenlabs_status ?? null,
+    error_message: snapshot.error_message ?? null,
+    summary: snapshot.summary ?? null,
+    transcript: snapshot.transcript ?? null,
+    confidence: snapshot.confidence ?? null,
+    updated_at: snapshot.updated_at ?? null,
+    payload: snapshot.payload ?? null
+  };
+  
+  return stableStringify(relevantFields);
+}
+
+/**
+ * Check if two snapshots are equal based on hash comparison
+ */
+function areSnapshotsEqual(a: CallAttemptSnapshot | null, b: CallAttemptSnapshot | null): boolean {
+  return computeDataHash(a) === computeDataHash(b);
+}
+
+function buildCallAttemptSnapshot(
+  apiAttempt: ApiCallAttempt | null,
+  profile: ProfileSnapshot | null,
+  lookupStatus: LookupStatusValue | undefined
+): CallAttemptSnapshot | null {
+  if (!apiAttempt && lookupStatus !== "cached" && !profile) {
+    return null;
+  }
+
+  const shouldForcePostCall = lookupStatus === "cached";
+
+  const payloadBase: Record<string, unknown> =
+    apiAttempt && apiAttempt.payload && typeof apiAttempt.payload === "object"
+      ? { ...apiAttempt.payload }
+      : {};
+
+  if (shouldForcePostCall) {
+    if (!("event" in payloadBase)) {
+      payloadBase.event = "post_call_transcription";
+    }
+    if (!("type" in payloadBase)) {
+      payloadBase.type = "post_call_transcription";
+    }
+  }
+
+  const statusValue = apiAttempt?.status ?? (shouldForcePostCall ? "post_call_transcription" : null);
+  const elevenStatusValue =
+    apiAttempt?.elevenlabs_status ?? (shouldForcePostCall ? "post_call_transcription" : null);
+  const summaryValue =
+    apiAttempt?.summary ?? profile?.summary ?? profile?.transcriptPreview ?? apiAttempt?.transcript ?? null;
+  const transcriptValue = apiAttempt?.transcript ?? profile?.transcriptPreview ?? null;
+  const confidenceValue =
+    apiAttempt?.confidence ?? (typeof profile?.confidence === "number" ? profile?.confidence : null);
+  const updatedAtValue =
+    apiAttempt?.updated_at ?? profile?.lastChecked ?? new Date().toISOString();
+
+  const finalPayload = Object.keys(payloadBase).length > 0 ? payloadBase : apiAttempt?.payload ?? null;
+
+  return {
+    status: statusValue,
+    elevenlabs_status: elevenStatusValue,
+    error_message: apiAttempt?.error_message ?? null,
+    summary: summaryValue,
+    transcript: transcriptValue,
+    confidence: confidenceValue ?? null,
+    updated_at: updatedAtValue,
+    payload: finalPayload
+  };
+}
+
 type FormStatus = "idle" | "validating" | "submitting" | "success" | "error";
 
 const isDev = process.env.NODE_ENV !== "production";
+// DEV_DEBUG=true means show dev-only UI elements (same as old DISABLE_ELEVENLABS_CALLS=false behavior)
+// DEV_DEBUG=false or unset means hide dev-only UI elements
+const DEV_DEBUG = process.env.NEXT_PUBLIC_DEV_DEBUG === "true";
+const showDevTools = isDev && DEV_DEBUG;
 
 export function LookupForm() {
   const [value, setValue] = React.useState("");
@@ -86,6 +236,7 @@ export function LookupForm() {
   const [lookupStatus, setLookupStatus] = React.useState<LookupStatusValue | null>(null);
   const [callAttempt, setCallAttempt] = React.useState<CallAttemptSnapshot | null>(null);
   const [resultTags, setResultTags] = React.useState<string[]>([]);
+  const [isResetting, setIsResetting] = React.useState(false);
   const [isPending, startTransition] = React.useTransition();
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -137,128 +288,129 @@ export function LookupForm() {
     let stopped = false;
     let intervalId: number | null = null;
     let fetchStatusRef: (() => Promise<void>) | null = null;
+    let lastETag: string | null = null;
+    let lastSnapshotHash: string | null = null;
 
     const fetchStatus = async () => {
       try {
+        const headers: HeadersInit = {
+          "Cache-Control": "no-cache"
+        };
+        
+        // Add If-None-Match header if we have a previous ETag
+        if (lastETag) {
+          headers["If-None-Match"] = lastETag;
+        }
+
         const response = await fetch(`/api/lookups/${lookupId}/status?ts=${Date.now()}`, {
-          cache: "no-store"
+          cache: "no-store",
+          headers
         });
+
+        // Handle 304 Not Modified response
+        if (response.status === 304) {
+          // No changes, skip processing
+          return;
+        }
 
         if (!response.ok) {
           return;
         }
 
+        // Store ETag for next request
+        const etag = response.headers.get("ETag");
+        if (etag) {
+          lastETag = etag;
+        }
+
         const data = await response.json();
         if (stopped) return;
 
-        // Debug logging in development
-        if (isDev) {
-          console.log("🔄 Polling update:", {
-            lookupId,
-            lookupStatus: data.lookup?.status,
-            callAttemptStatus: data.callAttempt?.status,
-            callAttemptElevenLabsStatus: data.callAttempt?.elevenlabs_status,
-            callAttemptPayload: data.callAttempt?.payload,
-            hasTranscript: !!data.callAttempt?.transcript,
-            hasSummary: !!data.callAttempt?.summary
+        const profile = data.profile ?? null;
+
+        // Debug logging for profile data
+        if (isDev && profile) {
+          console.log("📋 Profile data received", {
+            callerName: profile.callerName,
+            normalized: profile.normalized,
+            hasSummary: !!profile.summary,
+            hasTranscriptPreview: !!profile.transcriptPreview,
+            confidence: profile.confidence,
+            tags: profile.tags
           });
         }
 
         const latestStatus = data.lookup?.status as LookupStatusValue | undefined;
         
-        // Always update lookup status if available
         if (latestStatus) {
           setLookupStatus((prev) => (prev !== latestStatus ? latestStatus : prev));
         }
 
-        // Always update call attempt if data changed
-        if (data.callAttempt) {
-          const newCallAttempt = {
-            status: data.callAttempt.status,
-            elevenlabs_status: data.callAttempt.elevenlabs_status,
-            error_message: data.callAttempt.error_message,
-            summary: data.callAttempt.summary,
-            transcript: data.callAttempt.transcript,
-            confidence: data.callAttempt.confidence,
-            updated_at: data.callAttempt.updated_at,
-            payload: data.callAttempt.payload
-          };
-          
-          // Always update call attempt to ensure React re-renders with latest data
-          // This is important for real-time progress updates
-          setCallAttempt((prev) => {
-            if (!prev) {
-              if (isDev) {
-                console.log("📊 CallAttempt state set (first time):", {
-                  status: newCallAttempt.status,
-                  payload: newCallAttempt.payload
-                });
-              }
-              return newCallAttempt;
+        const nextCallAttempt = buildCallAttemptSnapshot(
+          (data.callAttempt ?? null) as ApiCallAttempt | null,
+          profile,
+          latestStatus
+        );
+
+        // Compute hash for change detection
+        const nextHash = computeDataHash(nextCallAttempt);
+        const hasChanged = nextHash !== lastSnapshotHash;
+
+        // Debug logging in development
+        if (isDev) {
+          console.log("📊 Poll check", {
+            lookupId,
+            hashChanged: hasChanged,
+            previousHash: lastSnapshotHash?.substring(0, 50) ?? "null",
+            nextHash: nextHash.substring(0, 50),
+            nextCallAttempt: {
+              status: nextCallAttempt?.status,
+              elevenlabs_status: nextCallAttempt?.elevenlabs_status,
+              hasSummary: !!nextCallAttempt?.summary,
+              hasTranscript: !!nextCallAttempt?.transcript,
+              updated_at: nextCallAttempt?.updated_at
+            },
+            hasProfile: !!profile,
+            latestStatus,
+            rawApiData: {
+              status: data.callAttempt?.status,
+              elevenlabs_status: data.callAttempt?.elevenlabs_status,
+              hasSummary: !!data.callAttempt?.summary,
+              hasTranscript: !!data.callAttempt?.transcript
             }
-            
-            // Compare timestamps to prevent overwriting newer data with older data
-            // This is critical when webhook simulation sets fresh data, then polling tries to overwrite it
-            const prevTimestamp = prev.updated_at ? new Date(prev.updated_at).getTime() : 0;
-            const newTimestamp = newCallAttempt.updated_at ? new Date(newCallAttempt.updated_at).getTime() : 0;
-            
-            if (newTimestamp < prevTimestamp && prevTimestamp > 0) {
-              // New data from API is older than current state - don't overwrite!
-              if (isDev) {
-                console.log("⏸️ Ignoring older data from API:", {
-                  prevTimestamp: new Date(prev.updated_at || '').toISOString(),
-                  newTimestamp: new Date(newCallAttempt.updated_at || '').toISOString(),
-                  prevStatus: prev.status,
-                  newStatus: newCallAttempt.status,
-                  prevHasData: !!(prev.transcript || prev.summary),
-                  newHasData: !!(newCallAttempt.transcript || newCallAttempt.summary)
-                });
-              }
-              return prev; // Keep the newer state
-            }
-            
-            // Check if anything meaningful changed (including payload)
-            const prevPayloadStr = JSON.stringify(prev.payload ?? {});
-            const newPayloadStr = JSON.stringify(newCallAttempt.payload ?? {});
-            
-            const hasChanges =
-              prev.status !== newCallAttempt.status ||
-              prev.elevenlabs_status !== newCallAttempt.elevenlabs_status ||
-              prev.summary !== newCallAttempt.summary ||
-              prev.transcript !== newCallAttempt.transcript ||
-              prev.confidence !== newCallAttempt.confidence ||
-              prev.updated_at !== newCallAttempt.updated_at ||
-              prevPayloadStr !== newPayloadStr;
-            
-            if (hasChanges && isDev) {
-              console.log("📊 CallAttempt state updated:", {
-                prevStatus: prev.status,
-                newStatus: newCallAttempt.status,
-                prevPayload: prev.payload,
-                newPayload: newCallAttempt.payload,
-                hasTranscript: !!newCallAttempt.transcript,
-                hasSummary: !!newCallAttempt.summary,
-                updatedAt: newCallAttempt.updated_at
-              });
-            } else if (isDev && !hasChanges) {
-              console.log("⏸️ CallAttempt state unchanged (skipping update)");
-            }
-            
-            // Always return new object to force React re-render (even if data is same)
-            // This ensures CallProgress component receives new props and re-evaluates
-            return hasChanges ? newCallAttempt : { ...newCallAttempt };
           });
         }
 
-        const profile = data.profile ?? null;
+        // Update hash tracker for next comparison
+        lastSnapshotHash = nextHash;
+
+        // Always update callAttempt state to ensure UI reflects latest data
+        setCallAttempt((prev) => {
+          // Double-check with areSnapshotsEqual for extra safety
+          if (areSnapshotsEqual(prev, nextCallAttempt)) {
+            return prev;
+          }
+
+          // Log only when there's an actual change
+          if (hasChanged && isDev) {
+            console.log("✅ Call attempt updated", {
+              status: nextCallAttempt?.status ?? null,
+              elevenlabs_status: nextCallAttempt?.elevenlabs_status ?? null,
+              hasSummary: !!nextCallAttempt?.summary,
+              hasTranscript: !!nextCallAttempt?.transcript
+            });
+          }
+
+          return nextCallAttempt;
+        });
 
         // Check if we have enough data to show a cached result
         const hasProfileData =
           profile &&
           (profile.callerName || profile.summary || profile.transcriptPreview);
         const hasCallAttemptData =
-          data.callAttempt &&
-          (data.callAttempt.summary || data.callAttempt.transcript);
+          nextCallAttempt &&
+          (nextCallAttempt.summary || nextCallAttempt.transcript);
         
         // Normalize status values to handle edge cases like "b'Success'"
         const normalizeStatusForCheck = (value?: string | null) => {
@@ -267,11 +419,11 @@ export function LookupForm() {
           return str;
         };
         
-        const elevenStatusNormalized = normalizeStatusForCheck(data.callAttempt?.elevenlabs_status);
-        const statusNormalized = normalizeStatusForCheck(data.callAttempt?.status);
+        const elevenStatusNormalized = normalizeStatusForCheck(nextCallAttempt?.elevenlabs_status);
+        const statusNormalized = normalizeStatusForCheck(nextCallAttempt?.status);
         
         // Check payload for event information (webhook stores event in payload)
-        const payload = data.callAttempt?.payload;
+        const payload = nextCallAttempt?.payload;
         const payloadEvent = payload && typeof payload === "object" && "event" in payload 
           ? normalizeStatusForCheck(String(payload.event))
           : "";
@@ -305,7 +457,7 @@ export function LookupForm() {
         
         const hasCompletedStatus =
           latestStatus === "cached" ||
-          (data.callAttempt &&
+          (nextCallAttempt &&
             (elevenStatusNormalized.includes("success") ||
               elevenStatusNormalized.includes("completed") ||
               elevenStatusNormalized.includes("finished") ||
@@ -326,17 +478,17 @@ export function LookupForm() {
           (hasPostCallEvent && hasCallAttemptData);
 
         if (shouldShowCachedResult) {
-          const attemptPayload = data.callAttempt?.payload ?? null;
+          const attemptPayload = nextCallAttempt?.payload ?? null;
           const derivedName = extractNameFromPayload(attemptPayload);
           const summaryText =
             profile?.summary ??
-            data.callAttempt?.summary ??
-            data.callAttempt?.transcript ??
+            nextCallAttempt?.summary ??
+            nextCallAttempt?.transcript ??
             "Samenvatting volgt zodra de agent klaar is.";
           const confidenceValue =
-            profile?.confidence ?? data.callAttempt?.confidence ?? null;
+            profile?.confidence ?? nextCallAttempt?.confidence ?? null;
           const lastCheckedSource =
-            profile?.lastChecked ?? data.callAttempt?.updated_at ?? new Date().toISOString();
+            profile?.lastChecked ?? nextCallAttempt?.updated_at ?? new Date().toISOString();
 
           setResult((prev) => {
             if (!prev) {
@@ -351,7 +503,8 @@ export function LookupForm() {
             const callerName =
               profile?.callerName ??
               derivedName ??
-              (prev.state === "cached" ? prev.callerName : "Onbekende beller");
+              (prev.state === "cached" ? prev.callerName : null) ?? // Preserve existing callerName if available
+              "Onbekende beller";
 
             return {
               state: "cached",
@@ -419,7 +572,7 @@ export function LookupForm() {
               state: "not_found",
               normalized: data.lookup?.normalized ?? prev.normalized,
               message:
-                data.callAttempt?.error_message ??
+                nextCallAttempt?.error_message ??
                 (prev.state === "not_found"
                   ? prev.message
                   : "De AI-call is mislukt. Probeer het later opnieuw."),
@@ -493,45 +646,82 @@ export function LookupForm() {
   }, [status, errorMessage, result, callAttempt]);
 
   return (
-    <form className="space-y-4" onSubmit={handleSubmit} noValidate>
-      <div className="flex flex-col gap-3 sm:flex-row">
-        <Input
-          autoComplete="tel"
-          autoFocus
-          inputMode="tel"
-          name="phoneNumber"
-          placeholder="+316 123 456 78"
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          maxLength={20}
-          aria-invalid={status === "error"}
-          aria-describedby="lookup-feedback"
-        />
-        <Button
-          className="shrink-0 sm:h-11 sm:px-7"
-          disabled={isPending}
-          type="submit"
+    <>
+      <form className="space-y-4" onSubmit={handleSubmit} noValidate>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <Input
+            autoComplete="tel"
+            autoFocus
+            inputMode="tel"
+            name="phoneNumber"
+            placeholder="+316 123 456 78"
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            maxLength={20}
+            aria-invalid={status === "error"}
+            aria-describedby="lookup-feedback"
+          />
+          <Button
+            className="shrink-0 sm:h-11 sm:px-7"
+            disabled={isPending}
+            type="submit"
+          >
+            {isPending ? "Bezig…" : "Zoek nummer"}
+          </Button>
+        </div>
+        <p
+          className="text-sm text-muted-foreground"
+          id="lookup-feedback"
+          aria-live="polite"
         >
-          {isPending ? "Bezig…" : "Zoek nummer"}
-        </Button>
-      </div>
-      <p
-        className="text-sm text-muted-foreground"
-        id="lookup-feedback"
-        aria-live="polite"
-      >
-        {helperText}
-      </p>
-      {status === "success" && result ? (
-        <ResultCard
-          result={result}
-          callAttempt={callAttempt}
-          lookupStatus={lookupStatus}
-          tags={resultTags}
-          setCallAttempt={setCallAttempt}
+          {helperText}
+        </p>
+        {status === "success" && result ? (
+          <ResultCard
+            result={result}
+            callAttempt={callAttempt}
+            lookupStatus={lookupStatus}
+            tags={resultTags}
+            setCallAttempt={setCallAttempt}
+          />
+        ) : null}
+      </form>
+      {showDevTools ? (
+        <DevUtilities
+          isResetting={isResetting}
+          onReset={async () => {
+            if (!window.confirm("Weet je zeker dat je alle lookup-data wilt verwijderen?")) {
+              return;
+            }
+
+            setIsResetting(true);
+            try {
+              const response = await fetch("/api/test/reset-db", { method: "POST" });
+              if (!response.ok) {
+                const data = (await response.json().catch(() => null)) as { error?: string } | null;
+                throw new Error(data?.error ?? "Onbekende fout");
+              }
+
+              setValue("");
+              setStatus("idle");
+              setErrorMessage(null);
+              setResult(null);
+              setLookupStatus(null);
+              setCallAttempt(null);
+              setResultTags([]);
+              window.dispatchEvent(new Event("refresh-status"));
+            } catch (error) {
+              console.error("❌ Database reset mislukt:", error);
+              alert(
+                `Kon database niet leegmaken: ${error instanceof Error ? error.message : "Onbekende fout"}`
+              );
+            } finally {
+              setIsResetting(false);
+            }
+          }}
         />
       ) : null}
-    </form>
+    </>
   );
 }
 
@@ -596,7 +786,7 @@ function ResultCard({
         {isDev && result.debugMessage ? (
           <p className="mt-3 text-xs text-destructive">{result.debugMessage}</p>
         ) : null}
-      {isDev && result.lookupId ? (
+      {showDevTools && result.lookupId ? (
         <WebhookSimulator lookupId={result.lookupId} setCallAttempt={setCallAttempt} />
       ) : null}
       </div>
@@ -618,9 +808,39 @@ function ResultCard({
       {isDev && result.debugMessage ? (
         <p className="mt-3 text-xs text-destructive">{result.debugMessage}</p>
       ) : null}
-      {isDev && result.lookupId ? (
+      {showDevTools && result.lookupId ? (
         <WebhookSimulator lookupId={result.lookupId} setCallAttempt={setCallAttempt} />
       ) : null}
+    </div>
+  );
+}
+
+function DevUtilities({
+  isResetting,
+  onReset
+}: {
+  isResetting: boolean;
+  onReset: () => void | Promise<void>;
+}) {
+  return (
+    <div className="mt-6 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-left">
+      <div className="text-xs font-semibold uppercase tracking-wide text-destructive">
+        Dev only · Gegevens opschonen
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Verwijdert alle call attempts, lookups en profielen uit Supabase. Gebruik dit alleen voor
+        lokale tests; in productie is deze actie geblokkeerd.
+      </p>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="mt-3 border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground"
+        onClick={() => void onReset()}
+        disabled={isResetting}
+      >
+        {isResetting ? "Bezig met legen…" : "Leeg database"}
+      </Button>
     </div>
   );
 }
@@ -634,6 +854,7 @@ function WebhookSimulator({
 }) {
   const [isSimulating, setIsSimulating] = React.useState(false);
   const [lastEvent, setLastEvent] = React.useState<string | null>(null);
+  const [callerName, setCallerName] = React.useState<string>("");
 
   const simulateWebhook = async (event: string) => {
     setIsSimulating(true);
@@ -655,17 +876,17 @@ function WebhookSimulator({
         
         // If the response contains updated callAttempt data, use it directly
         if (data.callAttempt) {
-          console.log("📊 Using updated callAttempt from response:", data.callAttempt);
-          setCallAttempt(data.callAttempt);
-          
-          // Don't trigger immediate refresh - we already have the latest callAttempt data!
-          // Only trigger a delayed refresh to sync lookup status and profile data (not callAttempt)
-          // This prevents the polling from overwriting our fresh callAttempt data with stale cache
-          const refreshDelayMs = 3000; // 3 seconds should be enough for database consistency
-          
+          const snapshot = buildCallAttemptSnapshot(
+            data.callAttempt as ApiCallAttempt,
+            null,
+            data.lookup?.status as LookupStatusValue | undefined
+          );
+          setCallAttempt(snapshot);
+
+          const refreshDelayMs = 3000;
           setTimeout(() => {
             if (isDev) {
-              console.log(`🔄 Triggering delayed refresh for lookup/profile sync (after ${refreshDelayMs}ms)`);
+              console.log("🔄 Triggering delayed refresh after simulator update");
             }
             window.dispatchEvent(new Event("refresh-status"));
           }, refreshDelayMs);
@@ -694,11 +915,57 @@ function WebhookSimulator({
     }
   };
 
+  const replayRealWebhook = async () => {
+    setIsSimulating(true);
+    setLastEvent(null);
+    try {
+      console.log("🚀 Replaying real ElevenLabs webhook via dev proxy", { lookupId, callerName });
+      const url = new URL(`/api/test/replay-elevenlabs-webhook`, window.location.origin);
+      url.searchParams.set("lookupId", lookupId);
+      if (callerName.trim()) url.searchParams.set("callerName", callerName.trim());
+      const response = await fetch(url.toString(), { method: "POST" });
+      const data = await response.json();
+      console.log("✅ Webhook replay response:", data);
+      // Trigger refresh similar to other simulation
+      console.log("🔄 Triggering immediate refresh (replay)");
+      window.dispatchEvent(new Event("refresh-status"));
+      setTimeout(() => {
+        console.log("🔄 Triggering backup refresh (replay)");
+        window.dispatchEvent(new Event("refresh-status"));
+      }, 1500);
+    } catch (error) {
+      console.error("❌ Webhook replay error:", error);
+      alert(`Error replaying webhook: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSimulating(false);
+    }
+  };
+
   return (
     <div className="mt-4 rounded-md border border-dashed border-muted-foreground/30 bg-muted/30 p-3">
       <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
         <TestTube className="h-3 w-3" />
         <span>Test Webhook Simulatie</span>
+      </div>
+      <div className="mb-2 flex items-center gap-2">
+        <input
+          type="text"
+          placeholder="Naam (optioneel)"
+          value={callerName}
+          onChange={(e) => setCallerName(e.target.value)}
+          className="h-7 w-48 rounded border bg-background px-2 text-xs"
+        />
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={replayRealWebhook}
+          disabled={isSimulating}
+          className="h-7 text-xs"
+          title="Stuurt een echte (gesigneerde) webhook naar het endpoint"
+        >
+          {isSimulating ? "..." : "🔁 Real webhook"}
+        </Button>
       </div>
       <div className="flex flex-wrap gap-2">
         <Button

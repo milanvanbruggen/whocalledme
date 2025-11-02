@@ -28,25 +28,6 @@ const STAGES = [
 type StageId = (typeof STAGES)[number]["id"];
 type StageState = "pending" | "active" | "complete" | "error";
 
-const CONNECTED_KEYWORDS = [
-  "connect",
-  "connecting",
-  "dial",
-  "dialing",
-  "ring",
-  "ringing",
-  "call_started",
-  "call_initiated",
-  "call answered",
-  "answered",
-  "in_progress",
-  "in-progress",
-  "live",
-  "speaking",
-  "ongoing",
-  "conversation_started"
-];
-
 const ANALYSIS_KEYWORDS = [
   "analysis",
   "analysing",
@@ -193,6 +174,7 @@ function determineStageStates({
   
   const hasAnalysisStarted = matchesAny(combinedStatusWithPayload, ANALYSIS_KEYWORDS);
   const hasCompletedData = callAttempt?.summary || callAttempt?.transcript;
+  const treatAsCompleted = lookupStatus === "cached";
   
   // Check for post-call events (indicates webhook has processed the call)
   // This includes post_call_transcription which is the main event we're looking for
@@ -208,32 +190,13 @@ function determineStageStates({
       "transcribing"
     ]);
 
-  if (process.env.NODE_ENV !== "production") {
-    console.log("🔍 CallProgress analysis:", {
-      statusValue,
-      elevenStatusValue,
-      combinedStatus,
-      payloadEvent,
-      payloadType,
-      combinedStatusWithPayload,
-      hasPostCallEvent,
-      hasAnalysisStarted,
-      hasCompletedData,
-      isJustScheduled: (statusValue === "scheduled" || elevenStatusValue === "scheduled" || 
-       (statusValue === "" && elevenStatusValue === "")) &&
-      !hasPostCallEvent &&
-      !hasAnalysisStarted &&
-      !hasCompletedData
-    });
-  }
-
   // Stage 2: Completed - check if truly completed
   // Only mark as completed if:
   // 1. Lookup status is cached (definitive)
   // 2. OR we have completed keywords AND completed data
   // 3. OR we have post-call event AND completed data (webhook just processed it)
   const hasCompleted =
-    lookupStatus === "cached" ||
+    treatAsCompleted ||
     (matchesAny(combinedStatusWithPayload, COMPLETED_KEYWORDS) && hasCompletedData) ||
     (hasPostCallEvent && hasCompletedData);
 
@@ -247,8 +210,8 @@ function determineStageStates({
 
   // Determine active stage sequentially (skip dialing stage)
   // Priority: completed > analysis > scheduled
-  if (hasCompleted && hasCompletedData) {
-    // All done - show stage 2 as complete (only if we have actual data)
+  if (treatAsCompleted || (hasCompleted && hasCompletedData)) {
+    // All done - show stage 2 as complete when lookup is cached or we have final data
     activeIndex = 2;
   } else if (hasAnalysisStarted || hasPostCallEvent || hasCompletedData) {
     // Analysis stage - we have data being processed OR post-call events (webhook processing)
@@ -263,35 +226,25 @@ function determineStageStates({
     activeIndex = 1;
   }
 
-  if (process.env.NODE_ENV !== "production") {
-    console.log("🔍 CallProgress result:", {
-      activeIndex,
-      hasCompleted,
-      hasCompletedData,
-      isJustScheduled,
-      finalActiveIndex: activeIndex
-    });
-  }
-
+  // Determine active stage sequentially (skip dialing stage)
+  // Priority: completed > analysis > scheduled
   const stageEntries = STAGES.map((stage, index) => {
     let state: StageState = "pending";
 
+    const isFinalStage = index === STAGES.length - 1;
+
     if (index < activeIndex) {
-      // Previous stages are complete
       state = "complete";
     } else if (index === activeIndex) {
-      // Current stage
       if (hasFailure) {
         state = "error";
-      } else if (hasCompleted && index === 2) {
-        // Final stage is complete (index 2 = completed stage)
+      } else if ((hasCompleted || treatAsCompleted) && isFinalStage) {
         state = "complete";
       } else {
         state = "active";
       }
-    } else {
-      // Future stages are pending
-      state = "pending";
+    } else if (treatAsCompleted && isFinalStage) {
+      state = "complete";
     }
 
     return [stage.id, state] as const;
@@ -300,7 +253,8 @@ function determineStageStates({
   return {
     states: Object.fromEntries(stageEntries) as Record<StageId, StageState>,
     activeIndex,
-    hasFailure
+    hasFailure,
+    treatAsCompleted
   };
 }
 
@@ -331,24 +285,8 @@ export interface CallProgressProps {
 }
 
 export function CallProgress({ callAttempt, lookupStatus, etaSeconds }: CallProgressProps) {
-  const { states, activeIndex, hasFailure } = React.useMemo(
-    () => {
-      const result = determineStageStates({ callAttempt, lookupStatus });
-      
-      // Debug logging in development
-      if (process.env.NODE_ENV !== "production") {
-        console.log("📈 CallProgress determineStageStates:", {
-          callAttemptStatus: callAttempt?.status,
-          callAttemptElevenLabsStatus: callAttempt?.elevenlabs_status,
-          callAttemptPayload: callAttempt?.payload,
-          lookupStatus,
-          activeIndex: result.activeIndex,
-          states: result.states
-        });
-      }
-      
-      return result;
-    },
+  const { states, activeIndex, hasFailure, treatAsCompleted } = React.useMemo(
+    () => determineStageStates({ callAttempt, lookupStatus }),
     [callAttempt, lookupStatus]
   );
 
@@ -357,7 +295,7 @@ export function CallProgress({ callAttempt, lookupStatus, etaSeconds }: CallProg
     [states, activeIndex]
   );
 
-  const latestStatusLabel = formatStatusLabel(
+  const rawStatusLabel = formatStatusLabel(
     callAttempt?.elevenlabs_status ?? 
     callAttempt?.status ?? 
     (callAttempt?.payload && typeof callAttempt.payload === "object" && "event" in callAttempt.payload 
@@ -366,6 +304,7 @@ export function CallProgress({ callAttempt, lookupStatus, etaSeconds }: CallProg
       ? String(callAttempt.payload.type)
       : null)
   );
+  const latestStatusLabel = rawStatusLabel ?? (treatAsCompleted ? "Resultaat beschikbaar" : null);
   const updatedAtLabel = callAttempt?.updated_at ? formatDateTime(callAttempt.updated_at) : null;
 
   const etaLabel = (() => {
@@ -450,4 +389,3 @@ export function CallProgress({ callAttempt, lookupStatus, etaSeconds }: CallProg
     </div>
   );
 }
-

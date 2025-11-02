@@ -4,8 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { parsePhoneNumber } from "@/lib/phone";
 import {
-  recordCallAttempt,
   updateCallAttemptByConversation,
+  updateCallAttemptByLookupId,
   getCallAttemptByConversationId
 } from "@/lib/supabase/call-attempts";
 import {
@@ -14,6 +14,7 @@ import {
   getProfileById,
   updateLookupStatus,
   upsertPhoneProfile,
+  getLatestLookupByNormalized,
   type UpsertProfileInput
 } from "@/lib/supabase/lookups";
 import type {
@@ -156,6 +157,11 @@ function extractAgentOutput(
 ): ElevenLabsAgentOutput | null {
   // Helper function to validate and extract data from a candidate object
   const extractFromCandidate = (data: PlainObject, source: string): ElevenLabsAgentOutput | null => {
+    // Reference source in dev to avoid unused var linter error and aid debugging
+    if (IS_DEV) {
+      // eslint-disable-next-line no-console
+      console.log("🔎 extractFromCandidate source:", source);
+    }
     const consentRaw = data.consent;
     const name = data.name;
     const organisationRaw = data.organisation;
@@ -932,8 +938,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
 
-  const conversation = toPlainObject(payload.conversation ?? payload.data ?? payload);
+  const dataPayload = toPlainObject(payload.data);
+  const conversation = toPlainObject(payload.conversation ?? dataPayload ?? payload);
   const metadata = toPlainObject(conversation.metadata ?? payload.metadata);
+  const initiationClientData = toPlainObject(
+    conversation.conversation_initiation_client_data ?? dataPayload.conversation_initiation_client_data
+  );
+  const dynamicVariables = toPlainObject(initiationClientData.dynamic_variables);
   
   // Extract event type early for webhook type detection
   const event = (() => {
@@ -943,7 +954,6 @@ export async function POST(request: NextRequest) {
   
   if (IS_DEV) {
     // Extract more details for debugging
-    const dataPayload = toPlainObject(payload.data);
     const eventType = event;
     
     // Determine webhook type based on event and payload structure
@@ -985,8 +995,8 @@ export async function POST(request: NextRequest) {
       ? payload.conversation_id
       : typeof payload.conversationId === "string"
       ? payload.conversationId
-      : typeof toPlainObject(payload.data).conversation_id === "string"
-      ? (toPlainObject(payload.data).conversation_id as string)
+      : typeof dataPayload.conversation_id === "string"
+      ? (dataPayload.conversation_id as string)
       : null);
 
   if (!conversationId) {
@@ -1000,10 +1010,69 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing conversation id" }, { status: 400 });
   }
 
+  // Try to extract lookupId from multiple locations, including ElevenLabs dynamic variables
   const lookupId: string | undefined = (() => {
     const direct = metadata.lookupId ?? metadata.lookup_id ?? payload.lookupId ?? payload.lookup_id;
-    return typeof direct === "string" ? direct : undefined;
+    if (typeof direct === "string") return direct;
+
+    const dynLookupId = dynamicVariables.lookupId ?? dynamicVariables.lookup_id;
+    if (typeof dynLookupId === "string") return dynLookupId;
+
+    return undefined;
   })();
+
+  const conversationCustomer = toPlainObject(conversation.customer);
+  const metadataContact = toPlainObject(metadata.contact);
+  const payloadContact = toPlainObject(dataPayload.contact);
+
+  const normalizedCandidates: Array<string | null> = [
+    typeof metadata.normalized === "string" ? metadata.normalized : null,
+    typeof dynamicVariables.normalized === "string" ? dynamicVariables.normalized : null,
+    typeof dynamicVariables.normalized_number === "string" ? dynamicVariables.normalized_number : null,
+    typeof dynamicVariables.target_number === "string" ? dynamicVariables.target_number : null,
+    typeof dynamicVariables.targetNumber === "string" ? dynamicVariables.targetNumber : null,
+    typeof dynamicVariables.rawInput === "string" ? dynamicVariables.rawInput : null,
+    typeof dataPayload.normalized === "string" ? dataPayload.normalized : null,
+    typeof dataPayload.phone_number === "string" ? dataPayload.phone_number : null,
+    typeof conversation.phone_number === "string" ? conversation.phone_number : null,
+    typeof conversationCustomer.number === "string" ? conversationCustomer.number : null,
+    typeof conversationCustomer.phone_number === "string" ? conversationCustomer.phone_number : null,
+    typeof payload.phone_number === "string" ? payload.phone_number : null,
+    typeof metadataContact.number === "string" ? metadataContact.number : null,
+    typeof metadataContact.phone_number === "string" ? metadataContact.phone_number : null,
+    typeof metadataContact.phoneNumber === "string" ? metadataContact.phoneNumber : null,
+    typeof payloadContact.number === "string" ? payloadContact.number : null,
+    typeof payloadContact.phone_number === "string" ? payloadContact.phone_number : null,
+    typeof payloadContact.phoneNumber === "string" ? payloadContact.phoneNumber : null
+  ];
+
+  let normalizedNumberPre: string | null = null;
+  for (const candidate of normalizedCandidates) {
+    if (!candidate) continue;
+    try {
+      normalizedNumberPre = parsePhoneNumber(candidate);
+      break;
+    } catch {
+      continue;
+    }
+  }
+
+  let resolvedLookupId: string | null = lookupId ?? null;
+  let lookupRecord: { id: string; normalized: string; profile_id: string | null } | null = null;
+  if (resolvedLookupId) {
+    const fetchedLookup = await getLookupById(resolvedLookupId);
+    if (fetchedLookup) {
+      lookupRecord = fetchedLookup;
+    } else {
+      if (IS_DEV) {
+        console.warn("⚠️ Lookup id from webhook not found in database:", {
+          lookupId: resolvedLookupId,
+          normalizedNumberPre
+        });
+      }
+      resolvedLookupId = null;
+    }
+  }
 
   // Note: event is already extracted above
   
@@ -1013,18 +1082,14 @@ export async function POST(request: NextRequest) {
   })();
 
   // Also check data.payload.status for status information
-  const dataPayloadStatus = (() => {
-    const dataPayload = toPlainObject(payload.data);
-    return typeof dataPayload.status === "string" ? dataPayload.status : undefined;
-  })();
+  const dataPayloadStatus = typeof dataPayload.status === "string" ? dataPayload.status : undefined;
 
   // Use conversationStatus or fallback to dataPayloadStatus
   const effectiveStatus = conversationStatus ?? dataPayloadStatus;
 
-  const analysis = toPlainObject(conversation.analysis ?? toPlainObject(payload.data).analysis);
+  const analysis = toPlainObject(conversation.analysis ?? dataPayload.analysis);
 
   const transcriptSource = (() => {
-    const dataPayload = toPlainObject(payload.data);
     if (Array.isArray(dataPayload.transcript)) return dataPayload.transcript;
     if (Array.isArray(conversation.transcript)) return conversation.transcript;
     return null;
@@ -1086,11 +1151,80 @@ export async function POST(request: NextRequest) {
   const hasNoDataYet = !hasCompletedData;
 
   // Check if call attempt exists and is still in "scheduled" state (indicating call just started)
-  let existingCallAttempt = null;
-  if (conversationId) {
-    existingCallAttempt = await getCallAttemptByConversationId(conversationId);
+  let existingCallAttempt = conversationId
+    ? await getCallAttemptByConversationId(conversationId)
+    : null;
+
+  if (existingCallAttempt?.lookup_id && !resolvedLookupId) {
+    resolvedLookupId = existingCallAttempt.lookup_id;
+    if (!lookupRecord || lookupRecord.id !== existingCallAttempt.lookup_id) {
+      const fetched = await getLookupById(existingCallAttempt.lookup_id);
+      if (fetched) {
+        lookupRecord = fetched;
+      }
+    }
   }
+
+  if (!resolvedLookupId && normalizedNumberPre) {
+    const latestLookup = await getLatestLookupByNormalized(normalizedNumberPre);
+    if (latestLookup) {
+      resolvedLookupId = latestLookup.id;
+      lookupRecord = {
+        id: latestLookup.id,
+        normalized: latestLookup.normalized,
+        profile_id: latestLookup.profile_id
+      };
+    }
+  }
+
   const isStillScheduled = existingCallAttempt?.status === "scheduled";
+
+  const enrichedPayload = {
+    ...(typeof payload === "object" && payload !== null ? payload : {}),
+    event: event ?? undefined,
+    type: event ?? undefined
+  };
+
+  const statusLower = effectiveStatus?.toLowerCase() ?? "";
+  const isPostCallEvent =
+    eventLower.includes("post_call") ||
+    eventLower.includes("post-call") ||
+    eventLower.includes("completed") ||
+    eventLower.includes("finished") ||
+    statusLower.includes("completed") ||
+    statusLower.includes("finished") ||
+    statusLower.includes("done") ||
+    statusLower.includes("succeeded") ||
+    statusLower.includes("success");
+
+  // If we have completed data (transcript/summary), this is definitely a post-call event
+  // OR if we have explicit post-call indicators
+  const shouldUpdateByLookupId = hasCompletedData || isPostCallEvent;
+
+  const hasExplicitPostCallTranscription =
+    eventLower.includes("post_call_transcription") || eventLower.includes("post-call-transcription");
+  const hasExplicitCompletionEvent =
+    eventLower.includes("completed") || eventLower.includes("finished");
+
+  let statusToSet = event ?? effectiveStatus ?? "received";
+  if (hasCompletedData || hasExplicitPostCallTranscription) {
+    statusToSet = "post_call_transcription";
+  } else if (hasExplicitCompletionEvent) {
+    statusToSet = event ?? "completed";
+  } else if (
+    statusLower.includes("completed") ||
+    statusLower.includes("finished") ||
+    statusLower.includes("succeeded") ||
+    statusLower.includes("success") ||
+    statusLower.includes("done")
+  ) {
+    statusToSet = effectiveStatus ?? "completed";
+  }
+
+  let elevenLabsStatusToSet: string | null = effectiveStatus ?? null;
+  if (hasCompletedData || isPostCallEvent || hasExplicitPostCallTranscription) {
+    elevenLabsStatusToSet = effectiveStatus ?? event ?? "post_call_transcription";
+  }
 
   // First, try to update/get the call attempt to find lookupId
   // We need lookupId to properly handle initiation events
@@ -1098,15 +1232,48 @@ export async function POST(request: NextRequest) {
   if (conversationId) {
     lookupIdFromCall = await updateCallAttemptByConversation({
       conversationId,
-      status: event ?? effectiveStatus ?? "received",
-      elevenLabsStatus: effectiveStatus ?? null,
-      payload,
+      status: statusToSet,
+      elevenLabsStatus: elevenLabsStatusToSet,
+      payload: enrichedPayload,
       transcript,
       summary,
       confidence,
       endedAt
     });
+
+    if (!lookupIdFromCall && resolvedLookupId) {
+      const updatedByLookup = await updateCallAttemptByLookupId({
+        lookupId: resolvedLookupId,
+        status: statusToSet,
+        elevenLabsStatus: elevenLabsStatusToSet,
+        payload: enrichedPayload,
+        transcript,
+        summary,
+        confidence,
+        endedAt
+      });
+
+      if (updatedByLookup) {
+        lookupIdFromCall = resolvedLookupId;
+        existingCallAttempt = updatedByLookup;
+      }
+    }
+
+    if (lookupIdFromCall) {
+      existingCallAttempt = await getCallAttemptByConversationId(conversationId);
+    }
   }
+
+  if (lookupIdFromCall && lookupIdFromCall !== resolvedLookupId) {
+    resolvedLookupId = lookupIdFromCall;
+    if (!lookupRecord || lookupRecord.id !== lookupIdFromCall) {
+      const fetched = await getLookupById(lookupIdFromCall);
+      if (fetched) {
+        lookupRecord = fetched;
+      }
+    }
+  }
+
 
   // Handle initiation events - update status to show call is starting
   // This includes:
@@ -1119,7 +1286,7 @@ export async function POST(request: NextRequest) {
     const elevenLabsStatus = effectiveStatus ?? null;
 
     // Get lookupId from call attempt if we don't have it from metadata
-    const currentLookupId = lookupId ?? lookupIdFromCall ?? null;
+    const currentLookupId = resolvedLookupId ?? lookupIdFromCall ?? null;
 
     if (currentLookupId) {
       // Update existing call attempt with initiation status
@@ -1161,23 +1328,120 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const effectiveLookupId = lookupId ?? lookupIdFromCall ?? null;
+  let effectiveLookupId = resolvedLookupId ?? lookupIdFromCall ?? null;
+
+  if (!effectiveLookupId && normalizedNumberPre) {
+    const latestLookup = await getLatestLookupByNormalized(normalizedNumberPre);
+    if (latestLookup) {
+      effectiveLookupId = latestLookup.id;
+      if (!lookupRecord || lookupRecord.id !== latestLookup.id) {
+        lookupRecord = {
+          id: latestLookup.id,
+          normalized: latestLookup.normalized,
+          profile_id: latestLookup.profile_id
+        };
+      }
+    }
+  }
 
   if (!effectiveLookupId) {
     return NextResponse.json({ success: true, note: "Lookup id missing" });
   }
 
-  if (!lookupIdFromCall) {
-    await recordCallAttempt({
+  // For post-call events with data, ALWAYS update by lookupId (same as test simulation)
+  // This ensures consistent data structure and triggers frontend updates correctly
+  if (shouldUpdateByLookupId && effectiveLookupId) {
+    const payloadForLookupUpdate = {
+      ...enrichedPayload,
+      event: event ?? (hasCompletedData ? "post_call_transcription" : enrichedPayload.event),
+      type: event ?? (hasCompletedData ? "post_call_transcription" : enrichedPayload.type)
+    };
+    
+    // Determine the status to set based on event type and available data
+    const lookupStatusToSet = statusToSet;
+    
+    if (IS_DEV) {
+      console.log("🔄 Updating call attempt by lookupId:", {
+        lookupId: effectiveLookupId,
+        event,
+        effectiveStatus,
+        hasCompletedData,
+        isPostCallEvent,
+        status: lookupStatusToSet,
+        elevenLabsStatus: elevenLabsStatusToSet,
+        hasTranscript: !!transcript,
+        hasSummary: !!summary,
+        transcriptLength: transcript?.length ?? 0,
+        summaryLength: summary?.length ?? 0
+      });
+    }
+    
+    const updateResult = await updateCallAttemptByLookupId({
       lookupId: effectiveLookupId,
-      status: event ?? effectiveStatus ?? "received",
-      conversationId,
-      elevenLabsStatus: effectiveStatus ?? null,
-      errorMessage: undefined
+      status: lookupStatusToSet,
+      elevenLabsStatus: elevenLabsStatusToSet,
+      payload: payloadForLookupUpdate,
+      transcript,
+      summary,
+      confidence,
+      endedAt
+    });
+    
+    if (IS_DEV) {
+      console.log("✅ Call attempt updated by lookupId:", {
+        lookupId: effectiveLookupId,
+        updateResult: updateResult ? "success" : "failed",
+        status: lookupStatusToSet,
+        hasTranscript: !!transcript,
+        hasSummary: !!summary
+      });
+    }
+    
+    // DEV SAFETY NET: if the active lookup in the UI is a different one for the same number,
+    // also mirror the update to the most recent lookup for that normalized number.
+    // This happens when DEV_DEBUG=false and the UI created a new scheduled lookup
+    // without a conversation id, while the webhook refers to an older conversation.
+    const normalizedForMirror = normalizedNumberPre;
+    if (normalizedForMirror) {
+      const latestLookup = await getLatestLookupByNormalized(normalizedForMirror);
+      if (latestLookup && latestLookup.id !== effectiveLookupId) {
+        if (IS_DEV) {
+          console.log("🪞 Mirroring update to latest lookup for normalized:", {
+            normalizedNumber: normalizedForMirror,
+            sourceLookupId: effectiveLookupId,
+            latestLookupId: latestLookup.id,
+            latestStatus: latestLookup.status
+          });
+        }
+        await updateCallAttemptByLookupId({
+          lookupId: latestLookup.id,
+          status: lookupStatusToSet,
+          elevenLabsStatus: elevenLabsStatusToSet,
+          payload: payloadForLookupUpdate,
+          transcript,
+          summary,
+          confidence,
+          endedAt
+        });
+      }
+    }
+  } else if (IS_DEV && effectiveLookupId) {
+    console.log("⏸️ Skipping lookupId update:", {
+      lookupId: effectiveLookupId,
+      event,
+      effectiveStatus,
+      hasCompletedData,
+      isPostCallEvent,
+      shouldUpdateByLookupId,
+      hasTranscript: !!transcript,
+      hasSummary: !!summary
     });
   }
 
-  const lookup = await getLookupById(effectiveLookupId);
+  const lookup =
+    lookupRecord && lookupRecord.id === effectiveLookupId
+      ? lookupRecord
+      : await getLookupById(effectiveLookupId);
   if (!lookup) {
     return NextResponse.json({ success: true, note: "Lookup not found" });
   }

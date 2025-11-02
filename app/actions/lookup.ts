@@ -121,12 +121,15 @@ export async function lookupPhoneNumber(input: { phoneNumber: string }): Promise
   }
 
   try {
-    // In development mode, skip actual ElevenLabs calls to allow testing without real calls
-    const DISABLE_ELEVENLABS_CALLS = process.env.DISABLE_ELEVENLABS_CALLS === "true" || isDev;
+    // Check if DEV_DEBUG is enabled
+    // DEV_DEBUG=true means use real ElevenLabs calls (same as DISABLE_ELEVENLABS_CALLS=false)
+    // DEV_DEBUG=false or unset means use mock calls (same as DISABLE_ELEVENLABS_CALLS=true)
+    const DEV_DEBUG = process.env.DEV_DEBUG === "true";
+    const USE_MOCK_CALLS = !DEV_DEBUG;
     
     let response: { success: boolean; message?: string; conversation_id: string | null; callSid?: string | null };
     
-    if (DISABLE_ELEVENLABS_CALLS) {
+    if (USE_MOCK_CALLS) {
       // Mock response for testing - generates a fake conversation_id
       const mockConversationId = `mock_conv_${lookupId}_${Date.now()}`;
       response = {
@@ -137,7 +140,7 @@ export async function lookupPhoneNumber(input: { phoneNumber: string }): Promise
       };
       
       if (isDev) {
-        console.log("🔧 Mock call created (ElevenLabs calls disabled):", {
+        console.log("🔧 Mock call created (DEV_DEBUG=false):", {
           lookupId,
           conversationId: mockConversationId,
           phoneNumber: normalized
@@ -163,7 +166,7 @@ export async function lookupPhoneNumber(input: { phoneNumber: string }): Promise
       elevenLabsStatus: response.message ?? null,
       payload: {
         callSid: response.callSid ?? null,
-        mock: DISABLE_ELEVENLABS_CALLS ? true : undefined
+        mock: USE_MOCK_CALLS ? true : undefined
       }
     });
   } catch (error) {

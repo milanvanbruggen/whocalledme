@@ -6,6 +6,7 @@ import {
   type DataSource,
   mapProfileRecord
 } from "@/lib/supabase/types";
+import { invalidateCache } from "@/lib/cache/status-cache";
 
 export async function fetchProfileRecordByNumber(normalized: string) {
   const supabase = getSupabaseAdminClient();
@@ -121,6 +122,7 @@ export async function updateLookupStatus(
   profileId?: string | null
 ) {
   const supabase = getSupabaseAdminClient();
+  const IS_DEV = process.env.NODE_ENV !== "production";
 
   const updates: Record<string, unknown> = {
     status
@@ -137,15 +139,27 @@ export async function updateLookupStatus(
 
   if (error) {
     console.error("Failed to update lookup status", error);
+  } else {
+    // Invalidate cache after successful update
+    invalidateCache(lookupId);
+    
+    if (IS_DEV) {
+      console.log("✅ Lookup status updated", {
+        lookupId,
+        status,
+        profileId: profileId ?? null
+      });
+    }
   }
 }
 
 export async function getLookupById(lookupId: string) {
   const supabase = getSupabaseAdminClient();
+  const IS_DEV = process.env.NODE_ENV !== "production";
 
   const { data, error } = await supabase
     .from("phone_lookups")
-    .select("id, normalized, profile_id")
+    .select("id, normalized, profile_id, status")
     .eq("id", lookupId)
     .maybeSingle();
 
@@ -154,7 +168,34 @@ export async function getLookupById(lookupId: string) {
     return null;
   }
 
-  return data as { id: string; normalized: string; profile_id: string | null } | null;
+  if (IS_DEV && data) {
+    console.log("🔍 getLookupById", {
+      lookupId,
+      status: data.status,
+      profileId: data.profile_id
+    });
+  }
+
+  return data as { id: string; normalized: string; profile_id: string | null; status: string | null } | null;
+}
+
+export async function getLatestLookupByNormalized(normalized: string) {
+  const supabase = getSupabaseAdminClient();
+
+  const { data, error } = await supabase
+    .from("phone_lookups")
+    .select("id, normalized, profile_id, status, created_at")
+    .eq("normalized", normalized)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Failed to fetch latest lookup by normalized", error);
+    return null;
+  }
+
+  return data as { id: string; normalized: string; profile_id: string | null; status: string; created_at: string } | null;
 }
 
 export interface UpsertProfileInput {

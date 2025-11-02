@@ -16,6 +16,14 @@ export function getSupabaseAdminClient() {
     auth: {
       autoRefreshToken: false,
       persistSession: false
+    },
+    db: {
+      schema: "public"
+    },
+    global: {
+      headers: {
+        "Cache-Control": "no-cache"
+      }
     }
   });
 }

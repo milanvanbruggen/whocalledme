@@ -1,5 +1,6 @@
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { CallAttemptRecord } from "@/lib/supabase/types";
+import { invalidateCache } from "@/lib/cache/status-cache";
 
 export interface RecordCallAttemptInput {
   lookupId: string;
@@ -104,28 +105,80 @@ export async function updateCallAttemptByConversation({
     return null;
   }
 
-  return (data as { lookup_id: string } | null)?.lookup_id ?? null;
+  const lookupId = (data as { lookup_id: string } | null)?.lookup_id ?? null;
+  
+  // Invalidate cache after successful update
+  if (lookupId) {
+    invalidateCache(lookupId);
+  }
+
+  return lookupId;
 }
 
 export async function getLatestCallAttempt(lookupId: string) {
   const supabase = getSupabaseAdminClient();
+  const IS_DEV = process.env.NODE_ENV !== "production";
 
-  // Use a different query pattern to avoid caching issues
-  // Instead of .maybeSingle(), we use .limit(1) and take the first result
+  // Force fresh query by ordering by updated_at DESC and using maybeSingle()
+  // This ensures we get the most recently updated record
+  // First get all records to check if there are multiple
+  const { data: allData, error: allError } = await supabase
+    .from("call_attempts")
+    .select("*")
+    .eq("lookup_id", lookupId)
+    .order("updated_at", { ascending: false })
+    .limit(5); // Get up to 5 records to check for duplicates
+
+  if (allError) {
+    console.error("Failed to fetch call attempts", allError);
+    return null;
+  }
+
+  if (IS_DEV && allData && allData.length > 1) {
+    console.log("⚠️ Multiple call attempts found", {
+      lookupId,
+      count: allData.length,
+      records: allData.map((r: CallAttemptRecord) => ({
+        id: r.id,
+        status: r.status,
+        elevenlabs_status: r.elevenlabs_status,
+        updated_at: r.updated_at
+      }))
+    });
+  }
+
+  // Get the most recent one using maybeSingle() with ordering
+  // Force fresh query by adding a small delay if needed (handled by caller)
   const { data, error } = await supabase
     .from("call_attempts")
     .select("*")
     .eq("lookup_id", lookupId)
     .order("updated_at", { ascending: false }) // Order by updated_at to get most recent
-    .limit(1);
+    .maybeSingle();
 
   if (error) {
     console.error("Failed to fetch call attempt", error);
     return null;
   }
 
+  const result = data as CallAttemptRecord | null;
+  
+  if (IS_DEV) {
+    console.log("🔍 getLatestCallAttempt", {
+      lookupId,
+      found: !!result,
+      status: result?.status,
+      elevenlabs_status: result?.elevenlabs_status,
+      hasSummary: !!result?.summary,
+      hasTranscript: !!result?.transcript,
+      updated_at: result?.updated_at,
+      totalRecords: allData?.length ?? 0,
+      allRecordsUpdatedAt: allData?.map((r: CallAttemptRecord) => r.updated_at) ?? []
+    });
+  }
+
   // Return first result or null
-  return (data && data.length > 0 ? data[0] : null) as CallAttemptRecord | null;
+  return result;
 }
 
 export async function getCallAttemptByConversationId(conversationId: string) {
@@ -241,6 +294,9 @@ export async function updateCallAttemptByLookupId({
       payload: (data as CallAttemptRecord).payload
     });
   }
+
+  // Invalidate cache after successful update
+  invalidateCache(lookupId);
 
   return data as CallAttemptRecord | null;
 }

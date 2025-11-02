@@ -200,7 +200,7 @@ function getEventConfig(event: string) {
   }
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   if (!IS_DEV) {
     return NextResponse.json({ error: "Not available in production" }, { status: 403 });
   }
@@ -228,4 +228,3 @@ export async function GET(request: NextRequest) {
     }
   });
 }
-
