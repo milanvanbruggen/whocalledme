@@ -93,7 +93,7 @@ export function validatePhoneNumberClient(value: string): {
             }
           }
         }
-      } catch (error) {
+      } catch {
         // Als metadata ophalen mislukt, gebruik algemene validatie
         console.warn("Could not fetch metadata for country:", countryCode);
       }
@@ -138,7 +138,7 @@ export function validatePhoneNumberClient(value: string): {
       minLength,
       maxLength
     };
-  } catch (error) {
+  } catch {
     // Als parsing mislukt, gebruik basisvalidatie
     if (!/^\+\d{7,15}$/.test(sanitized)) {
       return {
