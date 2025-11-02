@@ -54,7 +54,7 @@ const MOCK_PROFILES: ProfileMap = (() => {
       tags: ["Goede doelen", "Voicemail"]
     },
     {
-      normalized: parsePhoneNumber("0611122233"),
+      normalized: parsePhoneNumber("+31611122233"),
       callerName: "Onbekende lead agent",
       summary: "AI-agent trof een wachtrij zonder naam; herhaalcall gepland.",
       transcriptPreview:

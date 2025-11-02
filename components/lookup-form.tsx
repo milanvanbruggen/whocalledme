@@ -6,11 +6,12 @@ import { lookupPhoneNumber, type LookupResult } from "@/app/actions/lookup";
 import { CallProgress } from "@/components/call-progress";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { PhoneInputField } from "@/components/ui/phone-input";
 import { TestTube } from "lucide-react";
 import { formatDateTime } from "@/lib/format";
 import type { CallAttemptSnapshot, LookupStatusValue } from "@/lib/lookup-status";
 import { validatePhoneNumber } from "@/lib/phone";
+import { validatePhoneNumberClient } from "@/lib/phone-client";
 
 function toPlainObject(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object") {
@@ -238,6 +239,25 @@ export function LookupForm() {
   const [resultTags, setResultTags] = React.useState<string[]>([]);
   const [isResetting, setIsResetting] = React.useState(false);
   const [isPending, startTransition] = React.useTransition();
+
+  // Real-time validation feedback met client-side validatie
+  React.useEffect(() => {
+    if (value.trim().length === 0) {
+      setErrorMessage(null);
+      setStatus("idle");
+      return;
+    }
+
+    // Gebruik client-side validatie voor betere feedback
+    const clientValidation = validatePhoneNumberClient(value);
+    if (!clientValidation.success) {
+      setErrorMessage(clientValidation.message);
+      setStatus("error");
+    } else {
+      setErrorMessage(null);
+      setStatus("idle");
+    }
+  }, [value]);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -649,17 +669,15 @@ export function LookupForm() {
     <>
       <form className="space-y-4" onSubmit={handleSubmit} noValidate>
         <div className="flex flex-col gap-3 sm:flex-row">
-          <Input
-            autoComplete="tel"
+          <PhoneInputField
             autoFocus
-            inputMode="tel"
-            name="phoneNumber"
-            placeholder="+316 123 456 78"
             value={value}
-            onChange={(event) => setValue(event.target.value)}
-            maxLength={20}
+            onChange={setValue}
+            placeholder="+316 123 456 78"
+            disabled={isPending}
             aria-invalid={status === "error"}
             aria-describedby="lookup-feedback"
+            className="flex-1"
           />
           <Button
             className="shrink-0 sm:h-11 sm:px-7"

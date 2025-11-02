@@ -1,36 +1,39 @@
 import { z } from "zod";
 
 const SANITIZE_PATTERN = /[\s\-().]/g;
-const INTERNATIONAL_PATTERN = /^(\+|00)\d{6,15}$/;
-const NATIONAL_PATTERN = /^0\d{6,15}$/;
+// Alleen internationale nummers accepteren die beginnen met +
+// Minimaal 7 cijfers na de + (landcode 1-3 cijfers + minstens 4 cijfers voor het nummer)
+// Dit komt overeen met de kortste geldige internationale nummers
+const INTERNATIONAL_PATTERN = /^\+\d{7,15}$/;
 
 /**
  * Schema that normalises the phone number before continuing with lookups.
  * - Strips spaces, dashes, dots and parentheses.
- * - Accepts international prefixes (`+31`, `0031`) and national format (`06`).
- * - Converts `00` prefixes to `+` for consistency.
+ * - Accepts only international format starting with `+` (e.g., `+31628153017`).
+ * - Converts `00` prefixes to `+` for user convenience.
+ * - Validates minimum length: at least 10 characters total (including + and country code).
  */
 export const phoneNumberSchema = z
   .string()
   .trim()
-  .min(6, "Voer een geldig telefoonnummer in.")
+  .min(10, "Telefoonnummer is te kort. Voer een volledig nummer in (bijvoorbeeld: +31628153017).")
   .max(20, "Telefoonnummer is te lang.")
   .transform((value) => value.replace(SANITIZE_PATTERN, ""))
-  .refine(
-    (value) => {
-      if (INTERNATIONAL_PATTERN.test(value)) return true;
-      if (NATIONAL_PATTERN.test(value)) return true;
-      return false;
-    },
-    { message: "Voer een geldig telefoonnummer in." }
-  )
   .transform((value) => {
+    // Converteer 00 naar + voor gebruikersgemak
     if (value.startsWith("00")) {
       return `+${value.slice(2)}`;
     }
-
     return value;
-  });
+  })
+  .refine(
+    (value) => {
+      // Alleen internationale nummers die beginnen met + en minimaal 7 cijfers hebben
+      // Na de + moet er minimaal een landcode (1-3 cijfers) + nummer (minimaal 4 cijfers) zijn
+      return INTERNATIONAL_PATTERN.test(value);
+    },
+    { message: "Voer een geldig internationaal telefoonnummer in. Start met + en de landcode (bijvoorbeeld: +31628153017)." }
+  );
 
 export type PhoneNumber = z.infer<typeof phoneNumberSchema>;
 
