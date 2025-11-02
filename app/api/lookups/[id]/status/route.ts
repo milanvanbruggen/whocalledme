@@ -115,7 +115,7 @@ export async function GET(
 
   // Fetch profile - try both by profile_id and by normalized number
   // This ensures we get the profile even if profile_id isn't set yet but profile exists
-  let profileFromDb = profileRecord ? mapProfileRecord(profileRecord) : null;
+  const profileFromDb = profileRecord ? mapProfileRecord(profileRecord) : null;
   let profileByNumber = null;
   
   // If lookup status is 'cached' but we don't have a profile yet, fetch by number
