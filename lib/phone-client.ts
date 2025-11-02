@@ -109,7 +109,7 @@ export function validatePhoneNumberClient(value: string): {
           success: false,
           message: `Dit nummer heeft niet de juiste lengte voor ${countryName}. Verwacht: ${expectedLength}.`,
           isValid: false,
-          country: countryCode,
+          country: countryCode ?? undefined,
           minLength,
           maxLength
         };
@@ -124,7 +124,7 @@ export function validatePhoneNumberClient(value: string): {
         success: false,
         message,
         isValid: false,
-        country: countryCode,
+        country: countryCode ?? undefined,
         minLength,
         maxLength
       };
@@ -134,7 +134,7 @@ export function validatePhoneNumberClient(value: string): {
       success: true,
       message: "",
       isValid: true,
-      country: countryCode,
+      country: countryCode ?? undefined,
       minLength,
       maxLength
     };

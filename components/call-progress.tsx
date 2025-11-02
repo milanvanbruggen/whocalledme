@@ -134,7 +134,7 @@ function determineStageStates({
 }: {
   callAttempt: CallAttemptSnapshot | null;
   lookupStatus: LookupStatusValue | null;
-}): { states: Record<StageId, StageState>; activeIndex: number; hasFailure: boolean } {
+}): { states: Record<StageId, StageState>; activeIndex: number; hasFailure: boolean; treatAsCompleted: boolean } {
   // If no call attempt exists yet, show stage 0 (pending)
   if (!callAttempt) {
     return {
@@ -144,7 +144,8 @@ function determineStageStates({
         completed: "pending"
       },
       activeIndex: 0,
-      hasFailure: false
+      hasFailure: false,
+      treatAsCompleted: false
     };
   }
 
