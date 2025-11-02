@@ -121,11 +121,77 @@ export async function lookupPhoneNumber(input: { phoneNumber: string }): Promise
   }
 
   try {
-    // Check if DEV_DEBUG is enabled
-    // DEV_DEBUG=true means use real ElevenLabs calls (same as DISABLE_ELEVENLABS_CALLS=false)
-    // DEV_DEBUG=false or unset means use mock calls (same as DISABLE_ELEVENLABS_CALLS=true)
-    const DEV_DEBUG = process.env.DEV_DEBUG === "true";
-    const USE_MOCK_CALLS = !DEV_DEBUG;
+    // Check if DEV_DEBUG is enabled (or legacy DISABLE_ELEVENLABS_CALLS for backward compatibility)
+    // DEV_DEBUG=true means use mock calls (for debugging/testing without API costs)
+    // DEV_DEBUG=false means use real ElevenLabs calls (same as production behavior)
+    // DEV_DEBUG not set: in dev use mock calls, in production use real calls
+    // In production, always use real calls regardless of DEV_DEBUG setting
+    
+    // Read environment variables with proper normalization
+    const rawDevDebug = process.env.DEV_DEBUG;
+    const rawDisableCalls = process.env.DISABLE_ELEVENLABS_CALLS; // Legacy support
+    const DEV_DEBUG_VALUE = rawDevDebug?.toLowerCase().trim();
+    const DISABLE_CALLS_VALUE = rawDisableCalls?.toLowerCase().trim();
+    const isProduction = process.env.NODE_ENV === "production";
+    
+    // Determine whether to use mock calls:
+    // Priority: DEV_DEBUG > DISABLE_ELEVENLABS_CALLS (legacy)
+    // - Production: always use real calls
+    // - Development: 
+    //   - If DEV_DEBUG is explicitly "true", use mock calls
+    //   - If DEV_DEBUG is explicitly "false", use real calls
+    //   - If DEV_DEBUG is not set, check legacy DISABLE_ELEVENLABS_CALLS
+    //   - If neither is set, use mock calls (default behavior)
+    const DEV_DEBUG_ENABLED = DEV_DEBUG_VALUE === "true";
+    const DEV_DEBUG_DISABLED = DEV_DEBUG_VALUE === "false";
+    
+    // Legacy support: DISABLE_ELEVENLABS_CALLS=true means disable (use mock), false means enable (use real)
+    const LEGACY_DISABLE_CALLS = DISABLE_CALLS_VALUE === "true";
+    const LEGACY_ENABLE_CALLS = DISABLE_CALLS_VALUE === "false";
+    
+    // In production, always use real calls
+    // In development: determine based on DEV_DEBUG or legacy variable
+    let USE_MOCK_CALLS: boolean;
+    if (isProduction) {
+      USE_MOCK_CALLS = false; // Always real calls in production
+    } else if (DEV_DEBUG_VALUE !== undefined) {
+      // DEV_DEBUG is explicitly set (true or false)
+      // DEV_DEBUG=true means use mock calls, DEV_DEBUG=false means use real calls
+      USE_MOCK_CALLS = DEV_DEBUG_ENABLED;
+    } else if (DISABLE_CALLS_VALUE !== undefined) {
+      // Legacy: DISABLE_ELEVENLABS_CALLS is set
+      USE_MOCK_CALLS = LEGACY_DISABLE_CALLS;
+    } else {
+      // Neither is set: default to mock calls in dev
+      USE_MOCK_CALLS = true;
+    }
+    
+    // Always log in development for debugging
+    if (isDev) {
+      console.log("🔍 Call configuration:", {
+        DEV_DEBUG: {
+          rawValue: rawDevDebug,
+          normalizedValue: DEV_DEBUG_VALUE,
+          isEnabled: DEV_DEBUG_ENABLED,
+          isDisabled: DEV_DEBUG_DISABLED
+        },
+        legacy_DISABLE_ELEVENLABS_CALLS: {
+          rawValue: rawDisableCalls,
+          normalizedValue: DISABLE_CALLS_VALUE,
+          isDisabled: LEGACY_DISABLE_CALLS,
+          isEnabled: LEGACY_ENABLE_CALLS
+        },
+        result: {
+          isProduction,
+          useMockCalls: USE_MOCK_CALLS,
+          willUseRealCalls: !USE_MOCK_CALLS
+        },
+        phoneNumber: normalized,
+        allEnvKeys: Object.keys(process.env).filter(key => 
+          key.includes("DEV") || key.includes("DEBUG") || key.includes("DISABLE_ELEVENLABS")
+        )
+      });
+    }
     
     let response: { success: boolean; message?: string; conversation_id: string | null; callSid?: string | null };
     
@@ -140,7 +206,7 @@ export async function lookupPhoneNumber(input: { phoneNumber: string }): Promise
       };
       
       if (isDev) {
-        console.log("🔧 Mock call created (DEV_DEBUG=false):", {
+        console.log("🔧 Mock call created (DEV_DEBUG=true):", {
           lookupId,
           conversationId: mockConversationId,
           phoneNumber: normalized
@@ -148,15 +214,45 @@ export async function lookupPhoneNumber(input: { phoneNumber: string }): Promise
       }
     } else {
       // Real call
-      response = await startOutboundCall({
-        phoneNumber: normalized,
-        metadata: {
+      if (isDev) {
+        console.log("📞 Starting real ElevenLabs call:", {
+          phoneNumber: normalized,
           lookupId,
-          source: "web_lookup",
-          normalized,
-          rawInput
+          hasApiKey: !!process.env.ELEVENLABS_API_KEY,
+          hasAgentId: !!process.env.ELEVENLABS_AGENT_ID,
+          hasPhoneNumberId: !!process.env.ELEVENLABS_PHONE_NUMBER_ID
+        });
+      }
+      
+      try {
+        response = await startOutboundCall({
+          phoneNumber: normalized,
+          metadata: {
+            lookupId,
+            source: "web_lookup",
+            normalized,
+            rawInput
+          }
+        });
+        
+        if (isDev) {
+          console.log("✅ ElevenLabs call started successfully:", {
+            conversationId: response.conversation_id,
+            callSid: response.callSid,
+            message: response.message
+          });
         }
-      });
+      } catch (callError) {
+        const errorMessage = callError instanceof Error ? callError.message : String(callError);
+        if (isDev) {
+          console.error("❌ ElevenLabs call failed:", {
+            error: errorMessage,
+            phoneNumber: normalized,
+            lookupId
+          });
+        }
+        throw callError; // Re-throw to be caught by outer try-catch
+      }
     }
 
     await recordCallAttempt({

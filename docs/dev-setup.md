@@ -15,11 +15,11 @@ This ensures external services can reliably reach your local instance at the exp
 ### `DEV_DEBUG`
 
 Set to `true` to enable debug mode features:
-- **Real ElevenLabs API calls**: When `DEV_DEBUG=true`, the app will make real API calls to ElevenLabs (same as production behavior)
+- **Mock calls**: When `DEV_DEBUG=true`, the app will use mock calls instead of real ElevenLabs API calls (useful for testing without incurring API costs)
 - **Dev-only UI elements**: Shows "Gegevens opschonen" and "Test Webhook Simulatie" blocks in the UI
 
 Set to `false` or leave unset to:
-- Use mock calls instead of real ElevenLabs API calls (useful for testing without incurring API costs)
+- Use real ElevenLabs API calls (same as production behavior)
 - Hide dev-only UI elements
 
 ```bash
@@ -30,7 +30,11 @@ DEV_DEBUG=true
 NEXT_PUBLIC_DEV_DEBUG=true
 ```
 
-**Note:** Both `DEV_DEBUG` (server-side) and `NEXT_PUBLIC_DEV_DEBUG` (client-side) need to be set to `true` to enable all debug features. When `DEV_DEBUG=false` or unset, the lookup action will create mock conversation IDs and call SIDs instead of making real API calls to ElevenLabs.
+**Note:** 
+- `DEV_DEBUG=true` → uses mock calls (no API costs)
+- `DEV_DEBUG=false` or unset → uses real ElevenLabs API calls
+- In production, real calls are always used regardless of `DEV_DEBUG` setting
+- Both `DEV_DEBUG` (server-side) and `NEXT_PUBLIC_DEV_DEBUG` (client-side) can be set independently, but `DEV_DEBUG` also controls the visibility of dev tools in the UI
 
 ## Development Testing Endpoints
 

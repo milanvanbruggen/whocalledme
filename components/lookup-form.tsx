@@ -224,10 +224,8 @@ function buildCallAttemptSnapshot(
 type FormStatus = "idle" | "validating" | "submitting" | "success" | "error";
 
 const isDev = process.env.NODE_ENV !== "production";
-// DEV_DEBUG=true means show dev-only UI elements (same as old DISABLE_ELEVENLABS_CALLS=false behavior)
-// DEV_DEBUG=false or unset means hide dev-only UI elements
-const DEV_DEBUG = process.env.NEXT_PUBLIC_DEV_DEBUG === "true";
-const showDevTools = isDev && DEV_DEBUG;
+// Client-side DEV_DEBUG (for backward compatibility)
+const CLIENT_DEV_DEBUG = process.env.NEXT_PUBLIC_DEV_DEBUG === "true";
 
 export function LookupForm() {
   const [value, setValue] = React.useState("");
@@ -239,6 +237,33 @@ export function LookupForm() {
   const [resultTags, setResultTags] = React.useState<string[]>([]);
   const [isResetting, setIsResetting] = React.useState(false);
   const [isPending, startTransition] = React.useTransition();
+  const [showDevTools, setShowDevTools] = React.useState(false);
+
+  // Check DEV_DEBUG status from server-side via API
+  React.useEffect(() => {
+    if (!isDev) {
+      setShowDevTools(false);
+      return;
+    }
+
+    // If NEXT_PUBLIC_DEV_DEBUG is explicitly set, use that
+    if (CLIENT_DEV_DEBUG) {
+      setShowDevTools(true);
+      return;
+    }
+
+    // Otherwise, check server-side DEV_DEBUG via API
+    fetch("/api/dev/debug-status")
+      .then((res) => res.json())
+      .then((data: { isDev: boolean; devDebugEnabled: boolean }) => {
+        // Show dev tools if server-side DEV_DEBUG is enabled OR client-side is enabled
+        setShowDevTools(data.isDev && (data.devDebugEnabled || CLIENT_DEV_DEBUG));
+      })
+      .catch(() => {
+        // Fallback: if API fails, use client-side value only
+        setShowDevTools(CLIENT_DEV_DEBUG);
+      });
+  }, []);
 
   // Real-time validation feedback met client-side validatie
   React.useEffect(() => {
@@ -701,6 +726,7 @@ export function LookupForm() {
             lookupStatus={lookupStatus}
             tags={resultTags}
             setCallAttempt={setCallAttempt}
+            showDevTools={showDevTools}
           />
         ) : null}
       </form>
@@ -748,13 +774,15 @@ function ResultCard({
   callAttempt,
   lookupStatus,
   tags,
-  setCallAttempt
+  setCallAttempt,
+  showDevTools
 }: {
   result: LookupResult;
   callAttempt: CallAttemptSnapshot | null;
   lookupStatus: LookupStatusValue | null;
   tags: string[];
   setCallAttempt: React.Dispatch<React.SetStateAction<CallAttemptSnapshot | null>>;
+  showDevTools: boolean;
 }) {
   if (result.state === "cached") {
     return (
