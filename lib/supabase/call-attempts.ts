@@ -248,15 +248,14 @@ export async function updateCallAttemptByLookupId({
     return null;
   }
   
-  if (IS_DEV) {
-    console.log("🔧 Updating call attempt by lookupId:", {
-      lookupId,
-      attemptId: latestAttempt.id,
-      currentStatus: latestAttempt.status,
-      currentElevenLabsStatus: latestAttempt.elevenlabs_status,
-      updates
-    });
-  }
+  // Always log in production for debugging
+  console.log("🔧 Updating call attempt by lookupId:", {
+    lookupId,
+    attemptId: latestAttempt.id,
+    currentStatus: latestAttempt.status,
+    currentElevenLabsStatus: latestAttempt.elevenlabs_status,
+    updates
+  });
   
   const { data, error } = await supabase
     .from("call_attempts")
@@ -286,7 +285,8 @@ export async function updateCallAttemptByLookupId({
     return null;
   }
 
-  if (IS_DEV && data) {
+  // Always log in production for debugging
+  if (data) {
     console.log("✅ Call attempt updated:", {
       id: data.id,
       status: (data as CallAttemptRecord).status,
