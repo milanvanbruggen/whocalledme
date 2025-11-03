@@ -126,25 +126,24 @@ export async function GET(
   
   const profile = profileFromDb ?? profileByNumber;
 
-  if (IS_DEV) {
-    console.log("📋 Profile data in API", {
-      lookupId,
-      profileId: lookup.profile_id,
-      lookupStatus: lookup.status,
-      profileFromDb: profileFromDb ? {
-        callerName: profileFromDb.callerName,
-        normalized: profileFromDb.normalized
-      } : null,
-      profileByNumber: profileByNumber ? {
-        callerName: profileByNumber.callerName,
-        normalized: profileByNumber.normalized
-      } : null,
-      profile: profile ? {
-        callerName: profile.callerName,
-        normalized: profile.normalized
-      } : null
-    });
-  }
+  // Always log profile data for production debugging
+  console.log("📋 Profile data in API", {
+    lookupId,
+    profileId: lookup.profile_id,
+    lookupStatus: lookup.status,
+    profileFromDb: profileFromDb ? {
+      callerName: profileFromDb.callerName,
+      normalized: profileFromDb.normalized
+    } : null,
+    profileByNumber: profileByNumber ? {
+      callerName: profileByNumber.callerName,
+      normalized: profileByNumber.normalized
+    } : null,
+    profile: profile ? {
+      callerName: profile.callerName,
+      normalized: profile.normalized
+    } : null
+  });
 
   const buildSnapshot = (
     raw: CallAttemptRecord | null,
@@ -224,20 +223,19 @@ export async function GET(
     profile
   };
 
-  if (IS_DEV) {
-    console.log("✅ Fresh data fetched (no cache)", {
-      lookupId,
-      lookupStatus: lookup.status,
-      callAttemptStatus: snapshot?.status,
-      callAttemptElevenLabsStatus: snapshot?.elevenlabs_status,
-      hasSummary: !!snapshot?.summary,
-      hasTranscript: !!snapshot?.transcript,
-      etag,
-      latestUpdatedAt,
-      callAttemptUpdatedAt: rawCallAttempt?.updated_at ?? null,
-      retries
-    });
-  }
+  // Always log response data for production debugging
+  console.log("✅ Fresh data fetched (no cache)", {
+    lookupId,
+    lookupStatus: lookup.status,
+    callAttemptStatus: snapshot?.status,
+    callAttemptElevenLabsStatus: snapshot?.elevenlabs_status,
+    hasSummary: !!snapshot?.summary,
+    hasTranscript: !!snapshot?.transcript,
+    etag,
+    latestUpdatedAt,
+    callAttemptUpdatedAt: rawCallAttempt?.updated_at ?? null,
+    retries
+  });
 
   return NextResponse.json(responseData, {
     headers: {
