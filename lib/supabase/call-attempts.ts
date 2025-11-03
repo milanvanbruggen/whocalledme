@@ -91,7 +91,7 @@ export async function updateCallAttemptByConversation({
     .from("call_attempts")
     .update(updates)
     .eq("elevenlabs_conversation_id", conversationId)
-    .select("lookup_id")
+    .select("*")
     .maybeSingle();
 
   if (error) {
@@ -103,6 +103,23 @@ export async function updateCallAttemptByConversation({
       updates
     });
     return null;
+  }
+
+  // Always log in production for debugging
+  if (data) {
+    console.log("✅ Updated call attempt by conversation:", {
+      conversationId,
+      recordId: (data as CallAttemptRecord).id,
+      status: (data as CallAttemptRecord).status,
+      elevenlabs_status: (data as CallAttemptRecord).elevenlabs_status,
+      hasSummary: !!(data as CallAttemptRecord).summary,
+      hasTranscript: !!(data as CallAttemptRecord).transcript,
+      updated_at: (data as CallAttemptRecord).updated_at
+    });
+  } else {
+    console.log("⚠️ No call attempt found for conversation:", {
+      conversationId
+    });
   }
 
   const lookupId = (data as { lookup_id: string } | null)?.lookup_id ?? null;
