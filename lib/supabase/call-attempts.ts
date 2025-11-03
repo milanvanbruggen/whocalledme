@@ -134,7 +134,8 @@ export async function getLatestCallAttempt(lookupId: string) {
     return null;
   }
 
-  if (IS_DEV && allData && allData.length > 1) {
+  // Always log multiple attempts in production for debugging
+  if (allData && allData.length > 1) {
     console.log("⚠️ Multiple call attempts found", {
       lookupId,
       count: allData.length,
@@ -163,19 +164,18 @@ export async function getLatestCallAttempt(lookupId: string) {
 
   const result = data as CallAttemptRecord | null;
   
-  if (IS_DEV) {
-    console.log("🔍 getLatestCallAttempt", {
-      lookupId,
-      found: !!result,
-      status: result?.status,
-      elevenlabs_status: result?.elevenlabs_status,
-      hasSummary: !!result?.summary,
-      hasTranscript: !!result?.transcript,
-      updated_at: result?.updated_at,
-      totalRecords: allData?.length ?? 0,
-      allRecordsUpdatedAt: allData?.map((r: CallAttemptRecord) => r.updated_at) ?? []
-    });
-  }
+  // Always log in production for debugging
+  console.log("🔍 getLatestCallAttempt", {
+    lookupId,
+    found: !!result,
+    status: result?.status,
+    elevenlabs_status: result?.elevenlabs_status,
+    hasSummary: !!result?.summary,
+    hasTranscript: !!result?.transcript,
+    updated_at: result?.updated_at,
+    totalRecords: allData?.length ?? 0,
+    allRecordsUpdatedAt: allData?.map((r: CallAttemptRecord) => r.updated_at) ?? []
+  });
 
   // Return first result or null
   return result;
