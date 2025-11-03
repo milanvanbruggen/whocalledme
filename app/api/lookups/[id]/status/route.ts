@@ -66,9 +66,17 @@ export async function GET(
     const hasNewDataButIncomplete = callAttemptGotNewer && 
       rawCallAttempt?.status === "post_call_transcription" && 
       (!rawCallAttempt?.summary || !rawCallAttempt?.transcript);
+    
+    // Check for elevenlabs_status mismatch - if elevenlabs_status indicates success/done but status is still scheduled
+    // This can happen due to database replication delay between Supabase replicas
+    const hasElevenLabsMismatch = rawCallAttempt?.elevenlabs_status && 
+      (rawCallAttempt.elevenlabs_status.toLowerCase().includes("success") ||
+       rawCallAttempt.elevenlabs_status.toLowerCase().includes("done") ||
+       rawCallAttempt.elevenlabs_status.toLowerCase().includes("completed")) &&
+      rawCallAttempt?.status === "scheduled";
 
     // Determine if we should retry
-    const shouldRetry = lookupStatusChanged || gotStaleData || hasNewDataButIncomplete;
+    const shouldRetry = lookupStatusChanged || gotStaleData || hasNewDataButIncomplete || hasElevenLabsMismatch;
 
     if (shouldRetry && retries < maxRetries - 1) {
       // Data changed or we got stale data, update our reference and retry to get fresh data
@@ -84,9 +92,11 @@ export async function GET(
           new: callAttemptUpdatedAt
         } : null,
         currentCallAttemptStatus: rawCallAttempt?.status,
+        currentElevenLabsStatus: rawCallAttempt?.elevenlabs_status,
         currentLookupStatus: freshLookup?.status,
         gotStaleData,
         hasNewDataButIncomplete,
+        hasElevenLabsMismatch,
         elapsedSeconds: Math.round((Date.now() - startTime) / 1000)
       });
       
