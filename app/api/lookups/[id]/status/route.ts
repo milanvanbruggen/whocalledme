@@ -72,24 +72,23 @@ export async function GET(
 
     if (shouldRetry && retries < maxRetries - 1) {
       // Data changed or we got stale data, update our reference and retry to get fresh data
-      if (IS_DEV) {
-        console.log(`⚠️ Retrying fetch (attempt ${retries + 1}/${maxRetries}) - checking every second`, {
-          lookupId,
-          lookupStatusChanged: lookupStatusChanged ? {
-            old: lastLookupStatus,
-            new: freshLookup?.status
-          } : null,
-          callAttemptGotNewer: callAttemptGotNewer ? {
-            old: lastCallAttemptUpdatedAt,
-            new: callAttemptUpdatedAt
-          } : null,
-          currentCallAttemptStatus: rawCallAttempt?.status,
-          currentLookupStatus: freshLookup?.status,
-          gotStaleData,
-          hasNewDataButIncomplete,
-          elapsedSeconds: Math.round((Date.now() - startTime) / 1000)
-        });
-      }
+      // Always log retries in production for debugging
+      console.log(`⚠️ Retrying fetch (attempt ${retries + 1}/${maxRetries}) - checking every second`, {
+        lookupId,
+        lookupStatusChanged: lookupStatusChanged ? {
+          old: lastLookupStatus,
+          new: freshLookup?.status
+        } : null,
+        callAttemptGotNewer: callAttemptGotNewer ? {
+          old: lastCallAttemptUpdatedAt,
+          new: callAttemptUpdatedAt
+        } : null,
+        currentCallAttemptStatus: rawCallAttempt?.status,
+        currentLookupStatus: freshLookup?.status,
+        gotStaleData,
+        hasNewDataButIncomplete,
+        elapsedSeconds: Math.round((Date.now() - startTime) / 1000)
+      });
       
       if (freshLookup) {
         lookup.status = freshLookup.status;
@@ -131,6 +130,14 @@ export async function GET(
     lookupId,
     profileId: lookup.profile_id,
     lookupStatus: lookup.status,
+    rawCallAttempt: rawCallAttempt ? {
+      id: rawCallAttempt.id,
+      status: rawCallAttempt.status,
+      elevenlabs_status: rawCallAttempt.elevenlabs_status,
+      hasSummary: !!rawCallAttempt.summary,
+      hasTranscript: !!rawCallAttempt.transcript,
+      updated_at: rawCallAttempt.updated_at
+    } : null,
     profileFromDb: profileFromDb ? {
       callerName: profileFromDb.callerName,
       normalized: profileFromDb.normalized
