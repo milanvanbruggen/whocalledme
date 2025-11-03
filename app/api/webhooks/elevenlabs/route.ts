@@ -1289,7 +1289,8 @@ export async function POST(request: NextRequest) {
   // 2. Status indicating call is starting (connecting, ringing, etc.)
   // 3. Call attempt is still "scheduled" (first webhook after scheduling)
   // 4. First webhook for a conversation with no data yet
-  if ((isInitiationEvent || isInitiationStatus || isStillScheduled || (hasNoDataYet && !hasCompletedData)) && conversationId) {
+  // IMPORTANT: Skip initiation update if we have completed data (post-call event) to avoid overwriting complete data
+  if ((isInitiationEvent || isInitiationStatus || isStillScheduled || (hasNoDataYet && !hasCompletedData)) && conversationId && !hasCompletedData && !isPostCallEvent) {
     const statusToSet = event ?? effectiveStatus ?? (isStillScheduled ? "initiating" : "connecting");
     const elevenLabsStatus = effectiveStatus ?? null;
 
