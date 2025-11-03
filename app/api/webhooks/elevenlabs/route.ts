@@ -952,39 +952,37 @@ export async function POST(request: NextRequest) {
     return typeof value === "string" ? value : undefined;
   })();
   
-  if (IS_DEV) {
-    // Extract more details for debugging
-    const eventType = event;
-    
-    // Determine webhook type based on event and payload structure
-    const webhookType = (() => {
-      if (eventType?.toLowerCase().includes("initiation") || eventType?.toLowerCase().includes("initiate")) {
-        return "initiation";
-      }
-      if (eventType?.toLowerCase().includes("post_call") || eventType?.toLowerCase().includes("transcription")) {
-        return "post_call";
-      }
-      return "conversation";
-    })();
-    
-    console.log("📥 ElevenLabs webhook received:", {
-      webhookType,
-      event: eventType,
-      conversationStatus: conversation.status ?? payload.status ?? dataPayload.status,
-      hasConversation: !!payload.conversation,
-      hasData: !!payload.data,
-      conversationKeys: payload.conversation ? Object.keys(payload.conversation).slice(0, 10) : [],
-      dataKeys: payload.data ? Object.keys(payload.data).slice(0, 10) : [],
-      // Log important fields from data payload
-      dataStatus: dataPayload.status,
-      dataConversationId: dataPayload.conversation_id,
-      dataAgentId: dataPayload.agent_id,
-      hasTranscript: !!dataPayload.transcript,
-      transcriptLength: Array.isArray(dataPayload.transcript) ? dataPayload.transcript.length : 0,
-      // Log first part of payload for debugging
-      payloadPreview: JSON.stringify(payload, null, 2).slice(0, 1000)
-    });
-  }
+  // Extract more details for debugging (always log in production for troubleshooting)
+  const eventType = event;
+  
+  // Determine webhook type based on event and payload structure
+  const webhookType = (() => {
+    if (eventType?.toLowerCase().includes("initiation") || eventType?.toLowerCase().includes("initiate")) {
+      return "initiation";
+    }
+    if (eventType?.toLowerCase().includes("post_call") || eventType?.toLowerCase().includes("transcription")) {
+      return "post_call";
+    }
+    return "conversation";
+  })();
+  
+  console.log("📥 ElevenLabs webhook received:", {
+    webhookType,
+    event: eventType,
+    conversationStatus: conversation.status ?? payload.status ?? dataPayload.status,
+    hasConversation: !!payload.conversation,
+    hasData: !!payload.data,
+    conversationKeys: payload.conversation ? Object.keys(payload.conversation).slice(0, 10) : [],
+    dataKeys: payload.data ? Object.keys(payload.data).slice(0, 10) : [],
+    // Log important fields from data payload
+    dataStatus: dataPayload.status,
+    dataConversationId: dataPayload.conversation_id,
+    dataAgentId: dataPayload.agent_id,
+    hasTranscript: !!dataPayload.transcript,
+    transcriptLength: Array.isArray(dataPayload.transcript) ? dataPayload.transcript.length : 0,
+    // Log first part of payload for debugging (in dev only)
+    payloadPreview: IS_DEV ? JSON.stringify(payload, null, 2).slice(0, 1000) : undefined
+  });
   
   const conversationId =
     (typeof conversation.id === "string"
@@ -1125,6 +1123,16 @@ export async function POST(request: NextRequest) {
   const hasCompletedData = !!(transcript || summary);
 
   const lookupStatus = determineLookupStatus(event, effectiveStatus);
+  
+  // Log lookup status determination for debugging
+  console.log("🔍 Lookup status determination:", {
+    event,
+    effectiveStatus,
+    lookupStatus,
+    hasCompletedData,
+    hasTranscript: !!transcript,
+    hasSummary: !!summary
+  });
 
   // Check if this is an initiation event (call starting)
   // This could be based on event type OR status indicating call is starting
@@ -1297,16 +1305,14 @@ export async function POST(request: NextRequest) {
         payload
       });
 
-      if (IS_DEV) {
-        console.log("📞 Initiation event detected:", {
-          event,
-          conversationStatus: effectiveStatus,
-          conversationId,
-          status: statusToSet,
-          lookupId: currentLookupId,
-          reason: isInitiationEvent ? "explicit_event" : isInitiationStatus ? "status_indicator" : isStillScheduled ? "was_scheduled" : "first_webhook"
-        });
-      }
+      console.log("📞 Initiation event detected:", {
+        event,
+        conversationStatus: effectiveStatus,
+        conversationId,
+        status: statusToSet,
+        lookupId: currentLookupId,
+        reason: isInitiationEvent ? "explicit_event" : isInitiationStatus ? "status_indicator" : isStillScheduled ? "was_scheduled" : "first_webhook"
+      });
     } else if (lookupIdFromCall) {
       // Update with initiation status
       await updateCallAttemptByConversation({
@@ -1316,15 +1322,13 @@ export async function POST(request: NextRequest) {
         payload
       });
 
-      if (IS_DEV) {
-        console.log("📞 Initiation event detected (found lookupId):", {
-          event,
-          conversationStatus: effectiveStatus,
-          conversationId,
-          status: statusToSet,
-          lookupIdFromCall
-        });
-      }
+      console.log("📞 Initiation event detected (found lookupId):", {
+        event,
+        conversationStatus: effectiveStatus,
+        conversationId,
+        status: statusToSet,
+        lookupIdFromCall
+      });
     }
   }
 
@@ -1360,21 +1364,19 @@ export async function POST(request: NextRequest) {
     // Determine the status to set based on event type and available data
     const lookupStatusToSet = statusToSet;
     
-    if (IS_DEV) {
-      console.log("🔄 Updating call attempt by lookupId:", {
-        lookupId: effectiveLookupId,
-        event,
-        effectiveStatus,
-        hasCompletedData,
-        isPostCallEvent,
-        status: lookupStatusToSet,
-        elevenLabsStatus: elevenLabsStatusToSet,
-        hasTranscript: !!transcript,
-        hasSummary: !!summary,
-        transcriptLength: transcript?.length ?? 0,
-        summaryLength: summary?.length ?? 0
-      });
-    }
+    console.log("🔄 Updating call attempt by lookupId:", {
+      lookupId: effectiveLookupId,
+      event,
+      effectiveStatus,
+      hasCompletedData,
+      isPostCallEvent,
+      status: lookupStatusToSet,
+      elevenLabsStatus: elevenLabsStatusToSet,
+      hasTranscript: !!transcript,
+      hasSummary: !!summary,
+      transcriptLength: transcript?.length ?? 0,
+      summaryLength: summary?.length ?? 0
+    });
     
     const updateResult = await updateCallAttemptByLookupId({
       lookupId: effectiveLookupId,
@@ -1387,15 +1389,13 @@ export async function POST(request: NextRequest) {
       endedAt
     });
     
-    if (IS_DEV) {
-      console.log("✅ Call attempt updated by lookupId:", {
-        lookupId: effectiveLookupId,
-        updateResult: updateResult ? "success" : "failed",
-        status: lookupStatusToSet,
-        hasTranscript: !!transcript,
-        hasSummary: !!summary
-      });
-    }
+    console.log("✅ Call attempt updated by lookupId:", {
+      lookupId: effectiveLookupId,
+      updateResult: updateResult ? "success" : "failed",
+      status: lookupStatusToSet,
+      hasTranscript: !!transcript,
+      hasSummary: !!summary
+    });
     
     // DEV SAFETY NET: if the active lookup in the UI is a different one for the same number,
     // also mirror the update to the most recent lookup for that normalized number.
@@ -1405,14 +1405,12 @@ export async function POST(request: NextRequest) {
     if (normalizedForMirror) {
       const latestLookup = await getLatestLookupByNormalized(normalizedForMirror);
       if (latestLookup && latestLookup.id !== effectiveLookupId) {
-        if (IS_DEV) {
-          console.log("🪞 Mirroring update to latest lookup for normalized:", {
-            normalizedNumber: normalizedForMirror,
-            sourceLookupId: effectiveLookupId,
-            latestLookupId: latestLookup.id,
-            latestStatus: latestLookup.status
-          });
-        }
+        console.log("🪞 Mirroring update to latest lookup for normalized:", {
+          normalizedNumber: normalizedForMirror,
+          sourceLookupId: effectiveLookupId,
+          latestLookupId: latestLookup.id,
+          latestStatus: latestLookup.status
+        });
         await updateCallAttemptByLookupId({
           lookupId: latestLookup.id,
           status: lookupStatusToSet,
@@ -1425,7 +1423,7 @@ export async function POST(request: NextRequest) {
         });
       }
     }
-  } else if (IS_DEV && effectiveLookupId) {
+  } else if (effectiveLookupId) {
     console.log("⏸️ Skipping lookupId update:", {
       lookupId: effectiveLookupId,
       event,
@@ -1931,7 +1929,21 @@ export async function POST(request: NextRequest) {
   }
 
   if (lookupStatus) {
+    console.log("📝 Updating lookup status to:", {
+      lookupId: effectiveLookupId,
+      lookupStatus,
+      profileId: profileId ?? null
+    });
     await updateLookupStatus(effectiveLookupId, lookupStatus, profileId ?? undefined);
+    console.log("✅ Lookup status updated successfully");
+  } else {
+    console.log("⏸️ Skipping lookup status update (lookupStatus is falsy):", {
+      lookupId: effectiveLookupId,
+      event,
+      effectiveStatus,
+      hasCompletedData,
+      isPostCallEvent
+    });
   }
 
   return NextResponse.json({ success: true });
